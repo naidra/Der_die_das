@@ -122,40 +122,46 @@ async function fetchWithProgress(url, onProgress) {
 }
 
 async function initDuckDb(onProgress = () => {}) {
-  onProgress(5);
+  const report = (progress, status) => {
+    onProgress({ progress, status });
+  };
+
+  report(5, 'Loading DuckDB module...');
   const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
   const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
-  onProgress(15);
+  report(15, 'Choosing the best DuckDB bundle...');
 
   const bundle = await duckdb.selectBundle(BUNDLES);
-  onProgress(25);
+  report(25, 'Starting DuckDB worker...');
 
   const worker = await duckdb.createWorker(bundle.mainWorker);
-  onProgress(35);
+  report(35, 'Starting DuckDB worker...');
 
   const logger = new duckdb.ConsoleLogger();
   const db = new duckdb.AsyncDuckDB(logger, worker);
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker, (event) => {
     const ratio = event.bytesTotal ? event.bytesLoaded / event.bytesTotal : 0;
-    onProgress(35 + Math.round(ratio * 30));
+    report(35 + Math.round(ratio * 25), 'Initializing DuckDB engine...');
   });
-  onProgress(65);
+  report(60, 'Opening DuckDB connection...');
 
   const conn = await db.connect();
-  onProgress(70);
+  report(65, 'Downloading nouns.csv...');
 
   const buffer = await fetchWithProgress(assetUrl('nouns.csv'), (ratio) => {
-    onProgress(70 + Math.round(ratio * 20));
+    report(65 + Math.round(ratio * 20), 'Downloading nouns.csv...');
   });
-  onProgress(90);
+  report(85, 'Registering nouns.csv with DuckDB...');
 
   await db.registerFileBuffer('nouns.csv', buffer);
+  report(90, 'Preparing searchable noun data...');
+
   await conn.query(`
     CREATE OR REPLACE VIEW nouns AS
     SELECT *
     FROM read_csv_auto('nouns.csv', header = true, ignore_errors = true);
   `);
-  onProgress(100);
+  report(99, 'Finalizing noun search...');
 
   return { db, conn };
 }
@@ -264,9 +270,10 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    initDuckDb((progress) => {
+    initDuckDb(({ progress, status: nextStatus }) => {
       if (!cancelled) {
-        setLoadingProgress(Math.max(0, Math.min(progress, 100)));
+        setLoadingProgress(Math.max(0, Math.min(progress, 99)));
+        setStatus(nextStatus);
       }
     })
       .then(({ db, conn }) => {
@@ -279,8 +286,8 @@ function App() {
         dbRef.current = db;
         connRef.current = conn;
         setLoadingProgress(100);
-        setReadyState('ready');
         setStatus('Ready');
+        setReadyState('ready');
       })
       .catch((error) => {
         setReadyState('error');
