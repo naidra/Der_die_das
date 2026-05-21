@@ -50,6 +50,29 @@ const TRANSLATION_DIRECTIONS = [
   }
 ];
 
+const TRANSLATION_FILE_BY_DICTIONARY = {
+  germanEnglish: {
+    fileName: TRANSLATION_FILE_NAME,
+    sourceName: 'German',
+    targetName: 'English'
+  },
+  englishGerman: {
+    fileName: ENGLISH_GERMAN_TRANSLATION_FILE_NAME,
+    sourceName: 'English',
+    targetName: 'German'
+  },
+  englishRussian: {
+    fileName: RUSSIAN_TRANSLATION_FILE_NAME,
+    sourceName: 'English',
+    targetName: 'Russian'
+  },
+  russianEnglish: {
+    fileName: RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME,
+    sourceName: 'Russian',
+    targetName: 'English'
+  }
+};
+
 function assetUrl(path) {
   return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
 }
@@ -253,6 +276,24 @@ function parseJsonBuffer(buffer, fileName) {
   }
 }
 
+async function loadTranslationMap(dictionary, onProgress = () => {}) {
+  const config = TRANSLATION_FILE_BY_DICTIONARY[dictionary];
+
+  if (!config) {
+    throw new Error(`Unknown translation dictionary: ${dictionary}`);
+  }
+
+  const buffer = await fetchWithProgress(assetUrl(config.fileName), onProgress, config.fileName);
+  const translations = parseTranslationObject(
+    parseJsonBuffer(buffer, config.fileName),
+    config.fileName,
+    config.sourceName,
+    config.targetName
+  );
+
+  return createTranslationMap(translations);
+}
+
 async function initAppData(onProgress = () => {}) {
   const report = (progress, status) => {
     onProgress({ progress, status });
@@ -261,36 +302,13 @@ async function initAppData(onProgress = () => {}) {
   report(10, `Downloading ${NOUN_FILE_NAME}...`);
 
   const nounBuffer = await fetchWithProgress(assetUrl(NOUN_FILE_NAME), (ratio) => {
-    report(10 + Math.round(ratio * 30), `Downloading ${NOUN_FILE_NAME}...`);
+    report(10 + Math.round(ratio * 55), `Downloading ${NOUN_FILE_NAME}...`);
   }, NOUN_FILE_NAME);
-  report(42, `Downloading ${TRANSLATION_FILE_NAME}...`);
+  report(65, `Downloading ${TRANSLATION_FILE_NAME}...`);
 
-  const translationBuffer = await fetchWithProgress(assetUrl(TRANSLATION_FILE_NAME), (ratio) => {
-    report(42 + Math.round(ratio * 12), `Downloading ${TRANSLATION_FILE_NAME}...`);
-  }, TRANSLATION_FILE_NAME);
-  report(56, `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
-
-  const russianTranslationBuffer = await fetchWithProgress(assetUrl(RUSSIAN_TRANSLATION_FILE_NAME), (ratio) => {
-    report(56 + Math.round(ratio * 18), `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
-  }, RUSSIAN_TRANSLATION_FILE_NAME);
-  report(76, `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
-
-  const englishGermanTranslationBuffer = await fetchWithProgress(
-    assetUrl(ENGLISH_GERMAN_TRANSLATION_FILE_NAME),
-    (ratio) => {
-      report(76 + Math.round(ratio * 7), `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
-    },
-    ENGLISH_GERMAN_TRANSLATION_FILE_NAME
-  );
-  report(84, `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
-
-  const russianEnglishTranslationBuffer = await fetchWithProgress(
-    assetUrl(RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME),
-    (ratio) => {
-      report(84 + Math.round(ratio * 10), `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
-    },
-    RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME
-  );
+  const germanEnglishMap = await loadTranslationMap('germanEnglish', (ratio) => {
+    report(65 + Math.round(ratio * 30), `Downloading ${TRANSLATION_FILE_NAME}...`);
+  });
   report(95, 'Preparing local indexes...');
 
   const nouns = parseJsonBuffer(nounBuffer, NOUN_FILE_NAME)
@@ -299,30 +317,6 @@ async function initAppData(onProgress = () => {}) {
       genus: String(row.genus || '').trim()
     }))
     .filter((row) => row.lemma);
-  const translations = parseTranslationObject(
-    parseJsonBuffer(translationBuffer, TRANSLATION_FILE_NAME),
-    TRANSLATION_FILE_NAME,
-    'German',
-    'English'
-  );
-  const russianTranslations = parseTranslationObject(
-    parseJsonBuffer(russianTranslationBuffer, RUSSIAN_TRANSLATION_FILE_NAME),
-    RUSSIAN_TRANSLATION_FILE_NAME,
-    'English',
-    'Russian'
-  );
-  const englishGermanTranslations = parseTranslationObject(
-    parseJsonBuffer(englishGermanTranslationBuffer, ENGLISH_GERMAN_TRANSLATION_FILE_NAME),
-    ENGLISH_GERMAN_TRANSLATION_FILE_NAME,
-    'English',
-    'German'
-  );
-  const russianEnglishTranslations = parseTranslationObject(
-    parseJsonBuffer(russianEnglishTranslationBuffer, RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME),
-    RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME,
-    'Russian',
-    'English'
-  );
 
   report(99, 'Finalizing local search...');
 
@@ -330,10 +324,7 @@ async function initAppData(onProgress = () => {}) {
     nouns,
     nounIndex: createNounIndex(nouns),
     translationMaps: {
-      germanEnglish: createTranslationMap(translations),
-      englishRussian: createTranslationMap(russianTranslations),
-      englishGerman: createTranslationMap(englishGermanTranslations),
-      russianEnglish: createTranslationMap(russianEnglishTranslations)
+      germanEnglish: germanEnglishMap
     }
   };
 }
@@ -393,6 +384,10 @@ async function queryTranslation(data, directionId, rawTerm) {
   }
 
   const map = data.translationMaps[direction.dictionary];
+  if (!map) {
+    throw new Error(`Translation data for ${direction.label} is not loaded`);
+  }
+
   const lookupTerm = normalizeLookupTerm(term);
   const exact = map.get(lookupTerm) || (direction.dictionary === 'germanEnglish' ? map.get(foldGermanTerm(lookupTerm)) : '');
 
@@ -620,6 +615,17 @@ function App() {
     setLastTranslationQuery(normalized);
 
     try {
+      const direction = selectedTranslationDirection;
+      if (!dataRef.current.translationMaps[direction.dictionary]) {
+        const config = TRANSLATION_FILE_BY_DICTIONARY[direction.dictionary];
+        setStatus(`Downloading ${config.fileName}...`);
+        dataRef.current.translationMaps[direction.dictionary] = await loadTranslationMap(
+          direction.dictionary,
+          (ratio) => setStatus(`Downloading ${config.fileName}... ${Math.round(ratio * 100)}%`)
+        );
+      }
+
+      setStatus('Running translation query...');
       const nextResult = await queryTranslation(dataRef.current, translationDirection, normalized);
       setTranslationResult(nextResult);
       setStatus('Ready');
