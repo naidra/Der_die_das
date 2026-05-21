@@ -15,12 +15,90 @@ const BUNDLES = {
 };
 
 const GENUS_COLUMNS = ['genus', 'genus 1', 'genus 2', 'genus 3', 'genus 4'];
+const NOUN_FILE_NAME = 'nouns.csv';
+const TRANSLATION_FILE_NAME = 'GERMAN_ENGLISH_TRANSLATION.csv';
+const LOOKUP_COLUMNS = [
+  'lemma',
+  'nominativ singular',
+  'nominativ singular 1',
+  'nominativ singular 2',
+  'nominativ singular 3',
+  'nominativ singular 4'
+];
 
 const ARTICLE_BY_GENUS = {
   m: 'der',
   f: 'die',
   n: 'das'
 };
+
+const ENGLISH_STOP_WORDS = [
+  'a',
+  'about',
+  'after',
+  'all',
+  'am',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'been',
+  'but',
+  'by',
+  'can',
+  'did',
+  'do',
+  'does',
+  'dont',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'he',
+  'her',
+  'here',
+  'him',
+  'his',
+  'i',
+  'im',
+  'in',
+  'is',
+  'it',
+  'its',
+  'john',
+  'just',
+  'mary',
+  'me',
+  'my',
+  'of',
+  'on',
+  'our',
+  'she',
+  'that',
+  'the',
+  'their',
+  'them',
+  'there',
+  'they',
+  'this',
+  'to',
+  'tom',
+  'toms',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'who',
+  'why',
+  'with',
+  'you',
+  'your'
+];
 
 const SELECT_COLUMNS = `
   lemma,
@@ -47,6 +125,63 @@ function escapeSql(value) {
 
 function normalizeInput(value) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeLookupTerm(value) {
+  return normalizeInput(String(value || ''))
+    .toLowerCase()
+    .replace(/[.,!?;:"'()[\]{}]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function foldGermanTerm(value) {
+  return value
+    .replace(/ä/g, 'a')
+    .replace(/ö/g, 'o')
+    .replace(/ü/g, 'u')
+    .replace(/ß/g, 'ss');
+}
+
+function normalizeArticlesKey(articles) {
+  return [...articles].sort().join('|');
+}
+
+function getResultIdentity(row) {
+  return `${normalizeArticlesKey(getArticles(row))}:${normalizeLookupTerm(getDisplayNoun(row))}`;
+}
+
+function mergeEnglishValues(...values) {
+  const translations = new Set();
+
+  values
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(','))
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .forEach((value) => translations.add(value));
+
+  return [...translations].join(', ');
+}
+
+function dedupeRows(rows) {
+  const rowsByIdentity = new Map();
+
+  for (const row of rows) {
+    const identity = getResultIdentity(row);
+    const existing = rowsByIdentity.get(identity);
+
+    if (!existing) {
+      rowsByIdentity.set(identity, row);
+      continue;
+    }
+
+    rowsByIdentity.set(identity, {
+      ...existing,
+      english: mergeEnglishValues(existing.english, row.english)
+    });
+  }
+
+  return [...rowsByIdentity.values()];
 }
 
 function getArticles(row) {
@@ -84,10 +219,26 @@ function getDisplayNoun(row) {
   return row['nominativ singular'] || row.lemma;
 }
 
-async function fetchWithProgress(url, onProgress) {
+function getTranslationLookupTerms(row) {
+  const terms = new Set();
+
+  for (const column of LOOKUP_COLUMNS) {
+    const normalized = normalizeLookupTerm(row[column]);
+    if (!normalized) {
+      continue;
+    }
+
+    terms.add(normalized);
+    terms.add(foldGermanTerm(normalized));
+  }
+
+  return [...terms];
+}
+
+async function fetchWithProgress(url, onProgress, fileName = 'file') {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Could not load nouns.csv (${response.status})`);
+    throw new Error(`Could not load ${fileName} (${response.status})`);
   }
 
   const contentLength = Number(response.headers.get('content-length'));
@@ -146,24 +297,121 @@ async function initDuckDb(onProgress = () => {}) {
   report(60, 'Opening DuckDB connection...');
 
   const conn = await db.connect();
-  report(65, 'Downloading nouns.csv...');
+  report(65, `Downloading ${NOUN_FILE_NAME}...`);
 
-  const buffer = await fetchWithProgress(assetUrl('nouns.csv'), (ratio) => {
-    report(65 + Math.round(ratio * 20), 'Downloading nouns.csv...');
-  });
-  report(85, 'Registering nouns.csv with DuckDB...');
+  const nounBuffer = await fetchWithProgress(assetUrl(NOUN_FILE_NAME), (ratio) => {
+    report(65 + Math.round(ratio * 12), `Downloading ${NOUN_FILE_NAME}...`);
+  }, NOUN_FILE_NAME);
+  report(77, `Downloading ${TRANSLATION_FILE_NAME}...`);
 
-  await db.registerFileBuffer('nouns.csv', buffer);
+  const translationBuffer = await fetchWithProgress(assetUrl(TRANSLATION_FILE_NAME), (ratio) => {
+    report(77 + Math.round(ratio * 8), `Downloading ${TRANSLATION_FILE_NAME}...`);
+  }, TRANSLATION_FILE_NAME);
+  report(85, 'Registering CSV files with DuckDB...');
+
+  await db.registerFileBuffer(NOUN_FILE_NAME, nounBuffer);
+  await db.registerFileBuffer(TRANSLATION_FILE_NAME, translationBuffer);
   report(90, 'Preparing searchable noun data...');
 
   await conn.query(`
     CREATE OR REPLACE VIEW nouns AS
     SELECT *
-    FROM read_csv_auto('nouns.csv', header = true, ignore_errors = true);
+    FROM read_csv_auto('${NOUN_FILE_NAME}', header = true, ignore_errors = true);
+  `);
+  report(94, 'Preparing English translations...');
+
+  await conn.query(`
+    CREATE OR REPLACE VIEW translations AS
+    SELECT DISTINCT
+      lower(trim(CAST(GERMAN AS VARCHAR))) AS german_key,
+      lower(trim(CAST(ENGLISH AS VARCHAR))) AS english_key,
+      trim(CAST(ENGLISH AS VARCHAR)) AS english
+    FROM read_csv_auto('${TRANSLATION_FILE_NAME}', header = true, ignore_errors = true)
+    WHERE GERMAN IS NOT NULL
+      AND ENGLISH IS NOT NULL
+      AND trim(CAST(GERMAN AS VARCHAR)) <> ''
+      AND trim(CAST(ENGLISH AS VARCHAR)) <> '';
   `);
   report(99, 'Finalizing noun search...');
 
   return { db, conn };
+}
+
+async function enrichRowsWithTranslations(conn, rows) {
+  if (!rows.length) {
+    return [];
+  }
+
+  const lookupValues = rows.flatMap((row, rowIndex) =>
+    getTranslationLookupTerms(row).map((term) => `(${rowIndex}, '${escapeSql(term)}')`)
+  );
+
+  if (!lookupValues.length) {
+    return rows.map((row) => ({ ...row, english: '' }));
+  }
+
+  const translationSql = `
+    WITH
+    lookup(row_index, term) AS (
+      VALUES ${lookupValues.join(', ')}
+    ),
+    exact_matches AS (
+      SELECT
+        lookup.row_index,
+        translations.english,
+        0 AS source_rank,
+        1000 AS hits,
+        length(translations.english) AS token_length
+      FROM lookup
+      JOIN translations ON translations.german_key = lookup.term
+    ),
+    phrase_matches AS (
+      SELECT
+        lookup.row_index,
+        regexp_replace(token, '[^a-z]', '', 'g') AS english,
+        1 AS source_rank,
+        count(*) AS hits,
+        length(regexp_replace(token, '[^a-z]', '', 'g')) AS token_length
+      FROM lookup
+      JOIN translations ON (' ' || translations.german_key || ' ') LIKE ('% ' || lookup.term || ' %')
+      CROSS JOIN unnest(string_split(translations.english_key, ' ')) AS english_tokens(token)
+      WHERE length(regexp_replace(token, '[^a-z]', '', 'g')) > 2
+        AND regexp_replace(token, '[^a-z]', '', 'g') NOT IN (${ENGLISH_STOP_WORDS.map((word) => `'${word}'`).join(', ')})
+      GROUP BY lookup.row_index, regexp_replace(token, '[^a-z]', '', 'g')
+    ),
+    ranked_matches AS (
+      SELECT
+        row_index,
+        english,
+        row_number() OVER (
+          PARTITION BY row_index
+          ORDER BY source_rank, hits DESC, token_length, english
+        ) AS rank
+      FROM (
+        SELECT * FROM exact_matches
+        UNION ALL
+        SELECT * FROM phrase_matches
+      )
+    )
+    SELECT
+      row_index,
+      string_agg(DISTINCT english, ', ' ORDER BY english) AS english
+    FROM ranked_matches
+    WHERE rank = 1
+    GROUP BY row_index;
+  `;
+
+  const translationsByIndex = new Map(
+    (await conn.query(translationSql)).toArray().map((row) => {
+      const translation = row.toJSON();
+      return [Number(translation.row_index), translation.english || ''];
+    })
+  );
+
+  return dedupeRows(rows.map((row, index) => ({
+    ...row,
+    english: translationsByIndex.get(index) || ''
+  })));
 }
 
 async function queryNouns(conn, rawTerm) {
@@ -186,7 +434,8 @@ async function queryNouns(conn, rawTerm) {
     LIMIT 25;
   `;
 
-  const exact = (await conn.query(exactSql)).toArray().map((row) => row.toJSON());
+  const exactRows = (await conn.query(exactSql)).toArray().map((row) => row.toJSON());
+  const exact = await enrichRowsWithTranslations(conn, exactRows);
   if (exact.length) {
     return { exact, suggestions: [] };
   }
@@ -200,7 +449,8 @@ async function queryNouns(conn, rawTerm) {
     LIMIT 12;
   `;
 
-  const suggestions = (await conn.query(suggestionSql)).toArray().map((row) => row.toJSON());
+  const suggestionRows = (await conn.query(suggestionSql)).toArray().map((row) => row.toJSON());
+  const suggestions = await enrichRowsWithTranslations(conn, suggestionRows);
   return { exact: [], suggestions };
 }
 
@@ -224,6 +474,7 @@ async function queryTypeaheadSuggestions(conn, rawTerm) {
     .toArray()
     .map((row) => row.toJSON())
     .filter(hasKnownArticle)
+    .filter((row, index, rows) => rows.findIndex((item) => getResultIdentity(item) === getResultIdentity(row)) === index)
     .slice(0, 10);
 }
 
@@ -247,6 +498,7 @@ function ResultCard({ row, subtle = false }) {
           <span>{displayNoun}</span>
         </p>
         {row.lemma !== displayNoun && <p className="lemma">Lemma: {row.lemma}</p>}
+        {row.english && <p className="translation">English: {row.english}</p>}
       </div>
     </article>
   );
@@ -254,7 +506,7 @@ function ResultCard({ row, subtle = false }) {
 
 function App() {
   const [readyState, setReadyState] = useState('loading');
-  const [status, setStatus] = useState('Loading DuckDB and nouns.csv...');
+  const [status, setStatus] = useState('Loading DuckDB and CSV data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -353,7 +605,7 @@ function App() {
       return 'The local CSV could not be loaded.';
     }
 
-    return 'Search exact German nouns such as Haus, Katze, Baum, or Mädchen.';
+    return 'Search exact German nouns such as Haus, Katze, Baum, or Mädchen to see the article and English translation when available.';
   }, [readyState]);
 
   async function handleSubmit(event) {
@@ -387,21 +639,31 @@ function App() {
     }
   }
 
-  function handleSuggestionClick(row) {
+  async function handleSuggestionClick(row) {
     const displayNoun = getDisplayNoun(row);
     setSearchTerm(displayNoun);
     setSuppressedSuggestionTerm(normalizeInput(displayNoun));
     setTypeaheadSuggestions([]);
-    setResult({ exact: [row], suggestions: [] });
     setLastQuery(displayNoun);
-    setStatus('Ready');
-    setIsSearching(false);
+    setIsSearching(true);
+    setStatus('Running SQL query...');
+
+    try {
+      const nextResult = await queryNouns(connRef.current, displayNoun);
+      setResult(nextResult.exact.length ? nextResult : { exact: [row], suggestions: [] });
+      setStatus('Ready');
+    } catch (error) {
+      setResult({ exact: [row], suggestions: [] });
+      setStatus(error?.message || String(error));
+    } finally {
+      setIsSearching(false);
+    }
   }
 
   const knownResult = useMemo(
     () => ({
-      exact: result.exact.filter(hasKnownArticle),
-      suggestions: result.suggestions.filter(hasKnownArticle)
+      exact: dedupeRows(result.exact.filter(hasKnownArticle)),
+      suggestions: dedupeRows(result.suggestions.filter(hasKnownArticle))
     }),
     [result]
   );

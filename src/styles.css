@@ -110,6 +110,7 @@ input {
 .eyebrow,
 .helper,
 .lemma,
+.translation,
 .section-heading span,
 .status {
   color: var(--muted);
@@ -346,6 +347,13 @@ h1 {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
   font-size: 0.86rem;
+}
+
+.translation {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.95rem;
+  line-height: 1.4;
 }
 
 .article {
