@@ -84,28 +84,78 @@ function getDisplayNoun(row) {
   return row['nominativ singular'] || row.lemma;
 }
 
-async function initDuckDb() {
-  const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
-  const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
-  const bundle = await duckdb.selectBundle(BUNDLES);
-  const worker = await duckdb.createWorker(bundle.mainWorker);
-  const logger = new duckdb.ConsoleLogger();
-  const db = new duckdb.AsyncDuckDB(logger, worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-
-  const conn = await db.connect();
-  const response = await fetch(assetUrl('nouns.csv'));
+async function fetchWithProgress(url, onProgress) {
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Could not load nouns.csv (${response.status})`);
   }
 
-  const buffer = new Uint8Array(await response.arrayBuffer());
+  const contentLength = Number(response.headers.get('content-length'));
+  if (!response.body || !contentLength) {
+    onProgress(1);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let receivedLength = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    chunks.push(value);
+    receivedLength += value.length;
+    onProgress(Math.min(receivedLength / contentLength, 1));
+  }
+
+  const buffer = new Uint8Array(receivedLength);
+  let position = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, position);
+    position += chunk.length;
+  }
+
+  return buffer;
+}
+
+async function initDuckDb(onProgress = () => {}) {
+  onProgress(5);
+  const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
+  const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
+  onProgress(15);
+
+  const bundle = await duckdb.selectBundle(BUNDLES);
+  onProgress(25);
+
+  const worker = await duckdb.createWorker(bundle.mainWorker);
+  onProgress(35);
+
+  const logger = new duckdb.ConsoleLogger();
+  const db = new duckdb.AsyncDuckDB(logger, worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker, (event) => {
+    const ratio = event.bytesTotal ? event.bytesLoaded / event.bytesTotal : 0;
+    onProgress(35 + Math.round(ratio * 30));
+  });
+  onProgress(65);
+
+  const conn = await db.connect();
+  onProgress(70);
+
+  const buffer = await fetchWithProgress(assetUrl('nouns.csv'), (ratio) => {
+    onProgress(70 + Math.round(ratio * 20));
+  });
+  onProgress(90);
+
   await db.registerFileBuffer('nouns.csv', buffer);
   await conn.query(`
     CREATE OR REPLACE VIEW nouns AS
     SELECT *
     FROM read_csv_auto('nouns.csv', header = true, ignore_errors = true);
   `);
+  onProgress(100);
 
   return { db, conn };
 }
@@ -199,6 +249,7 @@ function ResultCard({ row, subtle = false }) {
 function App() {
   const [readyState, setReadyState] = useState('loading');
   const [status, setStatus] = useState('Loading DuckDB and nouns.csv...');
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -213,7 +264,11 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    initDuckDb()
+    initDuckDb((progress) => {
+      if (!cancelled) {
+        setLoadingProgress(Math.max(0, Math.min(progress, 100)));
+      }
+    })
       .then(({ db, conn }) => {
         if (cancelled) {
           conn.close();
@@ -223,6 +278,7 @@ function App() {
 
         dbRef.current = db;
         connRef.current = conn;
+        setLoadingProgress(100);
         setReadyState('ready');
         setStatus('Ready');
       })
@@ -394,7 +450,6 @@ function App() {
 
               {!isSuggesting &&
                 typeaheadSuggestions.map((row, index) => {
-                  const articles = getArticles(row);
                   const displayNoun = getDisplayNoun(row);
 
                   return (
@@ -406,11 +461,6 @@ function App() {
                       type="button"
                     >
                       <span className="suggestion-name">
-                        {articles.map((article) => (
-                          <span className={articleClass(article)} key={`${row.lemma}-${article}`}>
-                            {article}
-                          </span>
-                        ))}
                         <span>{displayNoun}</span>
                       </span>
                       {row.lemma !== displayNoun && <span className="suggestion-lemma">{row.lemma}</span>}
@@ -423,7 +473,9 @@ function App() {
 
         <div className={`status status-${readyState}`} role={readyState === 'error' ? 'alert' : 'status'}>
           {readyState === 'error' ? <AlertCircle size={18} /> : <Sparkles size={18} />}
-          <span>{status}</span>
+          <span>
+            {readyState === 'loading' ? `${status} ${loadingProgress}%` : status}
+          </span>
         </div>
 
         <p className="helper">{helperText}</p>
