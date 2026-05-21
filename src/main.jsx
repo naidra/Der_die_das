@@ -16,7 +16,7 @@ const BUNDLES = {
 
 const GENUS_COLUMNS = ['genus', 'genus 1', 'genus 2', 'genus 3', 'genus 4'];
 const NOUN_FILE_NAME = 'nouns.csv';
-const TRANSLATION_FILE_NAME = 'GERMAN_ENGLISH_TRANSLATION.csv';
+const TRANSLATION_FILE_NAME = 'german_english.json';
 const LOOKUP_COLUMNS = [
   'lemma',
   'nominativ singular',
@@ -163,6 +163,22 @@ function mergeEnglishValues(...values) {
   return [...translations].join(', ');
 }
 
+function parseGermanEnglishTranslations(buffer) {
+  const jsonText = new TextDecoder().decode(buffer);
+  const translations = JSON.parse(jsonText);
+
+  if (!translations || Array.isArray(translations) || typeof translations !== 'object') {
+    throw new Error(`${TRANSLATION_FILE_NAME} must be a JSON object of German terms to English translations`);
+  }
+
+  return Object.entries(translations)
+    .map(([german, english]) => ({
+      german: String(german || '').trim(),
+      english: String(english || '').trim()
+    }))
+    .filter(({ german, english }) => german && english);
+}
+
 function dedupeRows(rows) {
   const rowsByIdentity = new Map();
 
@@ -307,10 +323,11 @@ async function initDuckDb(onProgress = () => {}) {
   const translationBuffer = await fetchWithProgress(assetUrl(TRANSLATION_FILE_NAME), (ratio) => {
     report(77 + Math.round(ratio * 8), `Downloading ${TRANSLATION_FILE_NAME}...`);
   }, TRANSLATION_FILE_NAME);
-  report(85, 'Registering CSV files with DuckDB...');
+  report(85, 'Parsing English translations...');
 
+  const translations = parseGermanEnglishTranslations(translationBuffer);
+  report(88, 'Registering noun data with DuckDB...');
   await db.registerFileBuffer(NOUN_FILE_NAME, nounBuffer);
-  await db.registerFileBuffer(TRANSLATION_FILE_NAME, translationBuffer);
   report(90, 'Preparing searchable noun data...');
 
   await conn.query(`
@@ -320,17 +337,17 @@ async function initDuckDb(onProgress = () => {}) {
   `);
   report(94, 'Preparing English translations...');
 
+  const translationValues = translations
+    .map(({ german, english }) => `('${escapeSql(german)}', '${escapeSql(english)}')`)
+    .join(', ');
+
   await conn.query(`
-    CREATE OR REPLACE VIEW translations AS
+    CREATE OR REPLACE TABLE translations AS
     SELECT DISTINCT
-      lower(trim(CAST(GERMAN AS VARCHAR))) AS german_key,
-      lower(trim(CAST(ENGLISH AS VARCHAR))) AS english_key,
-      trim(CAST(ENGLISH AS VARCHAR)) AS english
-    FROM read_csv_auto('${TRANSLATION_FILE_NAME}', header = true, ignore_errors = true)
-    WHERE GERMAN IS NOT NULL
-      AND ENGLISH IS NOT NULL
-      AND trim(CAST(GERMAN AS VARCHAR)) <> ''
-      AND trim(CAST(ENGLISH AS VARCHAR)) <> '';
+      lower(trim(CAST(german AS VARCHAR))) AS german_key,
+      lower(trim(CAST(english AS VARCHAR))) AS english_key,
+      trim(CAST(english AS VARCHAR)) AS english
+    FROM (VALUES ${translationValues}) AS source(german, english);
   `);
   report(99, 'Finalizing noun search...');
 
@@ -506,7 +523,7 @@ function ResultCard({ row, subtle = false }) {
 
 function App() {
   const [readyState, setReadyState] = useState('loading');
-  const [status, setStatus] = useState('Loading DuckDB and CSV data...');
+  const [status, setStatus] = useState('Loading DuckDB and local data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -602,7 +619,7 @@ function App() {
     }
 
     if (readyState === 'error') {
-      return 'The local CSV could not be loaded.';
+      return 'The local data could not be loaded.';
     }
 
     return 'Search exact German nouns such as Haus, Katze, Baum, or Mädchen to see the article and English translation when available.';
@@ -753,7 +770,7 @@ function App() {
       <section className="results-panel" aria-live="polite">
         {!lastQuery && (
           <div className="empty-state">
-            <p>Enter a noun to see which article the CSV data returns.</p>
+            <p>Enter a noun to see which article the local data returns.</p>
           </div>
         )}
 
