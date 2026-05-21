@@ -28,8 +28,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(135deg, rgba(0, 140, 114, 0.1), transparent 34%),
-    linear-gradient(315deg, rgba(245, 165, 36, 0.12), transparent 32%),
+    linear-gradient(135deg, color-mix(in srgb, var(--rose) 10%, transparent), transparent 34%),
+    linear-gradient(315deg, color-mix(in srgb, var(--amber) 12%, transparent), transparent 32%),
     var(--surface-soft);
 }
 
@@ -71,7 +71,7 @@ input {
   display: block;
   height: 5px;
   margin: -22px -22px 18px;
-  background: linear-gradient(90deg, var(--teal), var(--blue), var(--rose), var(--amber));
+  background: linear-gradient(90deg, var(--teal), var(--amber), var(--rose));
 }
 
 .results-panel::before {
@@ -192,6 +192,79 @@ h1 {
 .search-box button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
+  box-shadow: none;
+}
+
+.suggestions {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(23, 32, 31, 0.1);
+}
+
+.suggestion-state,
+.suggestion-item {
+  min-height: 40px;
+  border-radius: 6px;
+}
+
+.suggestion-state {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.suggestion-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.suggestion-item:hover,
+.suggestion-item:focus-visible {
+  outline: 0;
+  background: #f1f7f2;
+}
+
+.suggestion-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  font-weight: 850;
+}
+
+.suggestion-name > span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.suggestion-lemma {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.suggestion-item .article {
+  min-width: 38px;
+  min-height: 23px;
+  padding: 0 8px;
+  font-size: 0.74rem;
   box-shadow: none;
 }
 
@@ -369,6 +442,11 @@ h1 {
 
   .search-box button {
     width: 100%;
+  }
+
+  .suggestion-item {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .section-heading {

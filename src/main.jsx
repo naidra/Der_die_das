@@ -22,6 +22,21 @@ const ARTICLE_BY_GENUS = {
   n: 'das'
 };
 
+const SELECT_COLUMNS = `
+  lemma,
+  pos,
+  genus,
+  "genus 1",
+  "genus 2",
+  "genus 3",
+  "genus 4",
+  "nominativ singular",
+  "nominativ singular 1",
+  "nominativ singular 2",
+  "nominativ singular 3",
+  "nominativ singular 4"
+`;
+
 function assetUrl(path) {
   return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
 }
@@ -65,6 +80,10 @@ function articleClass(article) {
   return `article article-${article}`;
 }
 
+function getDisplayNoun(row) {
+  return row['nominativ singular'] || row.lemma;
+}
+
 async function initDuckDb() {
   const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
   const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
@@ -98,23 +117,9 @@ async function queryNouns(conn, rawTerm) {
   }
 
   const escapedTerm = escapeSql(term.toLowerCase());
-  const selectColumns = `
-    lemma,
-    pos,
-    genus,
-    "genus 1",
-    "genus 2",
-    "genus 3",
-    "genus 4",
-    "nominativ singular",
-    "nominativ singular 1",
-    "nominativ singular 2",
-    "nominativ singular 3",
-    "nominativ singular 4"
-  `;
 
   const exactSql = `
-    SELECT ${selectColumns}
+    SELECT ${SELECT_COLUMNS}
     FROM nouns
     WHERE lower(lemma) = '${escapedTerm}'
       OR lower("nominativ singular") = '${escapedTerm}'
@@ -131,7 +136,7 @@ async function queryNouns(conn, rawTerm) {
   }
 
   const suggestionSql = `
-    SELECT ${selectColumns}
+    SELECT ${SELECT_COLUMNS}
     FROM nouns
     WHERE lower(lemma) LIKE '${escapedTerm}%'
        OR lower("nominativ singular") LIKE '${escapedTerm}%'
@@ -143,9 +148,32 @@ async function queryNouns(conn, rawTerm) {
   return { exact: [], suggestions };
 }
 
+async function queryTypeaheadSuggestions(conn, rawTerm) {
+  const term = normalizeInput(rawTerm);
+  if (term.length <= 1) {
+    return [];
+  }
+
+  const escapedTerm = escapeSql(term.toLowerCase());
+  const suggestionSql = `
+    SELECT ${SELECT_COLUMNS}
+    FROM nouns
+    WHERE lower(lemma) LIKE '${escapedTerm}%'
+       OR lower("nominativ singular") LIKE '${escapedTerm}%'
+    ORDER BY length(lemma), lemma
+    LIMIT 25;
+  `;
+
+  return (await conn.query(suggestionSql))
+    .toArray()
+    .map((row) => row.toJSON())
+    .filter(hasKnownArticle)
+    .slice(0, 10);
+}
+
 function ResultCard({ row, subtle = false }) {
   const articles = getArticles(row);
-  const displayNoun = row['nominativ singular'] || row.lemma;
+  const displayNoun = getDisplayNoun(row);
 
   if (!articles.length) {
     return null;
@@ -173,10 +201,14 @@ function App() {
   const [status, setStatus] = useState('Loading DuckDB and nouns.csv...');
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [typeaheadSuggestions, setTypeaheadSuggestions] = useState([]);
+  const [suppressedSuggestionTerm, setSuppressedSuggestionTerm] = useState('');
   const [result, setResult] = useState({ exact: [], suggestions: [] });
   const [lastQuery, setLastQuery] = useState('');
   const dbRef = useRef(null);
   const connRef = useRef(null);
+  const suggestionRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +238,49 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const normalized = normalizeInput(searchTerm);
+    const requestId = suggestionRequestRef.current + 1;
+    suggestionRequestRef.current = requestId;
+
+    if (
+      readyState !== 'ready' ||
+      !connRef.current ||
+      normalized.length <= 1 ||
+      normalized === suppressedSuggestionTerm
+    ) {
+      setTypeaheadSuggestions([]);
+      setIsSuggesting(false);
+      return undefined;
+    }
+
+    setIsSuggesting(true);
+
+    let isActive = true;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const nextSuggestions = await queryTypeaheadSuggestions(connRef.current, normalized);
+        if (isActive && suggestionRequestRef.current === requestId) {
+          setTypeaheadSuggestions(nextSuggestions);
+        }
+      } catch {
+        if (isActive && suggestionRequestRef.current === requestId) {
+          setTypeaheadSuggestions([]);
+        }
+      } finally {
+        if (isActive && suggestionRequestRef.current === requestId) {
+          setIsSuggesting(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [readyState, searchTerm, suppressedSuggestionTerm]);
+
   const helperText = useMemo(() => {
     if (readyState === 'loading') {
       return 'Preparing the in-browser SQL engine.';
@@ -228,12 +303,14 @@ function App() {
     if (!normalized) {
       setResult({ exact: [], suggestions: [] });
       setLastQuery('');
+      setTypeaheadSuggestions([]);
       return;
     }
 
     setIsSearching(true);
     setStatus('Running SQL query...');
     setLastQuery(normalized);
+    setTypeaheadSuggestions([]);
 
     try {
       const nextResult = await queryNouns(connRef.current, normalized);
@@ -247,6 +324,17 @@ function App() {
     }
   }
 
+  function handleSuggestionClick(row) {
+    const displayNoun = getDisplayNoun(row);
+    setSearchTerm(displayNoun);
+    setSuppressedSuggestionTerm(normalizeInput(displayNoun));
+    setTypeaheadSuggestions([]);
+    setResult({ exact: [row], suggestions: [] });
+    setLastQuery(displayNoun);
+    setStatus('Ready');
+    setIsSearching(false);
+  }
+
   const knownResult = useMemo(
     () => ({
       exact: result.exact.filter(hasKnownArticle),
@@ -255,6 +343,7 @@ function App() {
     [result]
   );
   const showEmpty = lastQuery && !knownResult.exact.length && !knownResult.suggestions.length && !isSearching;
+  const showTypeahead = searchTerm.trim().length > 1 && (isSuggesting || typeaheadSuggestions.length > 0);
 
   return (
     <main className="app-shell">
@@ -277,9 +366,15 @@ function App() {
               id="noun-search"
               type="search"
               value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
+              onChange={(event) => {
+                setSearchTerm(event.target.value);
+                setSuppressedSuggestionTerm('');
+              }}
               placeholder="Type a noun..."
               autoComplete="off"
+              aria-autocomplete="list"
+              aria-controls="noun-suggestions"
+              aria-expanded={showTypeahead}
               disabled={readyState !== 'ready'}
             />
             <button type="submit" disabled={readyState !== 'ready' || isSearching}>
@@ -287,6 +382,43 @@ function App() {
               <span>Check</span>
             </button>
           </div>
+
+          {showTypeahead && (
+            <div className="suggestions" id="noun-suggestions" role="listbox" aria-label="Noun suggestions">
+              {isSuggesting && (
+                <div className="suggestion-state">
+                  <Loader2 className="spin" size={16} />
+                  <span>Searching...</span>
+                </div>
+              )}
+
+              {!isSuggesting &&
+                typeaheadSuggestions.map((row, index) => {
+                  const articles = getArticles(row);
+                  const displayNoun = getDisplayNoun(row);
+
+                  return (
+                    <button
+                      className="suggestion-item"
+                      key={`${row.lemma}-${displayNoun}-${index}`}
+                      onClick={() => handleSuggestionClick(row)}
+                      role="option"
+                      type="button"
+                    >
+                      <span className="suggestion-name">
+                        {articles.map((article) => (
+                          <span className={articleClass(article)} key={`${row.lemma}-${article}`}>
+                            {article}
+                          </span>
+                        ))}
+                        <span>{displayNoun}</span>
+                      </span>
+                      {row.lemma !== displayNoun && <span className="suggestion-lemma">{row.lemma}</span>}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
         </form>
 
         <div className={`status status-${readyState}`} role={readyState === 'error' ? 'alert' : 'status'}>
