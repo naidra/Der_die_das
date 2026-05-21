@@ -5,12 +5,12 @@ import './styles.css';
 
 const BUNDLES = {
   mvp: {
-    mainModule: new URL('/duckdb-mvp.wasm', window.location.href).toString(),
-    mainWorker: new URL('/duckdb-browser-mvp.worker.js', window.location.href).toString()
+    mainModule: assetUrl('duckdb-mvp.wasm'),
+    mainWorker: assetUrl('duckdb-browser-mvp.worker.js')
   },
   eh: {
-    mainModule: new URL('/duckdb-eh.wasm', window.location.href).toString(),
-    mainWorker: new URL('/duckdb-browser-eh.worker.js', window.location.href).toString()
+    mainModule: assetUrl('duckdb-eh.wasm'),
+    mainWorker: assetUrl('duckdb-browser-eh.worker.js')
   }
 };
 
@@ -21,6 +21,10 @@ const ARTICLE_BY_GENUS = {
   f: 'die',
   n: 'das'
 };
+
+function assetUrl(path) {
+  return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
+}
 
 function escapeSql(value) {
   return value.replace(/'/g, "''");
@@ -62,7 +66,7 @@ function articleClass(article) {
 }
 
 async function initDuckDb() {
-  const duckdbModuleUrl = new URL('/duckdb-browser.mjs', window.location.href).href;
+  const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
   const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
   const bundle = await duckdb.selectBundle(BUNDLES);
   const worker = await duckdb.createWorker(bundle.mainWorker);
@@ -71,7 +75,7 @@ async function initDuckDb() {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
 
   const conn = await db.connect();
-  const response = await fetch('/nouns.csv');
+  const response = await fetch(assetUrl('nouns.csv'));
   if (!response.ok) {
     throw new Error(`Could not load nouns.csv (${response.status})`);
   }
