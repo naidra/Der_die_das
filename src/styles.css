@@ -34,7 +34,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -131,6 +132,37 @@ h1 {
   letter-spacing: 0;
 }
 
+.tab-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.tab-switch button {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.tab-switch button[aria-selected="true"] {
+  color: #fff;
+  background: var(--teal);
+  box-shadow: 0 8px 18px rgba(0, 140, 114, 0.2);
+}
+
 .search-form {
   display: grid;
   gap: 8px;
@@ -139,6 +171,22 @@ h1 {
 .search-form label,
 .section-heading p {
   font-weight: 800;
+}
+
+.translation-form select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #cfd9d0;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+}
+
+.translation-form select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .search-box {
@@ -354,6 +402,37 @@ h1 {
   overflow-wrap: anywhere;
   font-size: 0.95rem;
   line-height: 1.4;
+}
+
+.translation-card {
+  display: grid;
+  gap: 8px;
+}
+
+.translation-source,
+.translation-target {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.translation-source {
+  font-size: 1.4rem;
+  font-weight: 850;
+}
+
+.translation-target {
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.translation-target span {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .article {

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, BookOpen, Check, Loader2, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } from 'lucide-react';
 import './styles.css';
 
 const BUNDLES = {
@@ -18,6 +18,8 @@ const GENUS_COLUMNS = ['genus', 'genus 1', 'genus 2', 'genus 3', 'genus 4'];
 const NOUN_FILE_NAME = 'nouns.csv';
 const TRANSLATION_FILE_NAME = 'german_english.json';
 const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
+const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
+const RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME = 'russian_english.json';
 const LOOKUP_COLUMNS = [
   'lemma',
   'nominativ singular',
@@ -115,6 +117,49 @@ const SELECT_COLUMNS = `
   "nominativ singular 3",
   "nominativ singular 4"
 `;
+
+const TRANSLATION_DIRECTIONS = [
+  {
+    id: 'german-english',
+    label: 'German to English',
+    inputLabel: 'German word',
+    placeholder: 'Haus',
+    table: 'translations',
+    sourceColumn: 'german_key',
+    targetColumn: 'english',
+    resultLabel: 'English'
+  },
+  {
+    id: 'english-german',
+    label: 'English to German',
+    inputLabel: 'English word',
+    placeholder: 'house',
+    table: 'english_german_translations',
+    sourceColumn: 'english_key',
+    targetColumn: 'german',
+    resultLabel: 'German'
+  },
+  {
+    id: 'english-russian',
+    label: 'English to Russian',
+    inputLabel: 'English word',
+    placeholder: 'tree',
+    table: 'russian_translations',
+    sourceColumn: 'english_key',
+    targetColumn: 'russian',
+    resultLabel: 'Russian'
+  },
+  {
+    id: 'russian-english',
+    label: 'Russian to English',
+    inputLabel: 'Russian word',
+    placeholder: 'дом',
+    table: 'russian_english_translations',
+    sourceColumn: 'russian_key',
+    targetColumn: 'english',
+    resultLabel: 'English'
+  }
+];
 
 function assetUrl(path) {
   return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
@@ -290,6 +335,12 @@ async function fetchWithProgress(url, onProgress, fileName = 'file') {
   return buffer;
 }
 
+function buildValuesSql(translations) {
+  return translations
+    .map(({ source, target }) => `('${escapeSql(source)}', '${escapeSql(target)}')`)
+    .join(', ');
+}
+
 async function initDuckDb(onProgress = () => {}) {
   const report = (progress, status) => {
     onProgress({ progress, status });
@@ -330,7 +381,25 @@ async function initDuckDb(onProgress = () => {}) {
   const russianTranslationBuffer = await fetchWithProgress(assetUrl(RUSSIAN_TRANSLATION_FILE_NAME), (ratio) => {
     report(85 + Math.round(ratio * 3), `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
   }, RUSSIAN_TRANSLATION_FILE_NAME);
-  report(88, 'Parsing translations...');
+  report(88, `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
+
+  const englishGermanTranslationBuffer = await fetchWithProgress(
+    assetUrl(ENGLISH_GERMAN_TRANSLATION_FILE_NAME),
+    (ratio) => {
+      report(88 + Math.round(ratio), `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
+    },
+    ENGLISH_GERMAN_TRANSLATION_FILE_NAME
+  );
+  report(89, `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
+
+  const russianEnglishTranslationBuffer = await fetchWithProgress(
+    assetUrl(RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME),
+    (ratio) => {
+      report(89 + Math.round(ratio), `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
+    },
+    RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME
+  );
+  report(90, 'Parsing translations...');
 
   const translations = parseTranslationObject(translationBuffer, TRANSLATION_FILE_NAME, 'German', 'English');
   const russianTranslations = parseTranslationObject(
@@ -339,9 +408,21 @@ async function initDuckDb(onProgress = () => {}) {
     'English',
     'Russian'
   );
-  report(89, 'Registering noun data with DuckDB...');
+  const englishGermanTranslations = parseTranslationObject(
+    englishGermanTranslationBuffer,
+    ENGLISH_GERMAN_TRANSLATION_FILE_NAME,
+    'English',
+    'German'
+  );
+  const russianEnglishTranslations = parseTranslationObject(
+    russianEnglishTranslationBuffer,
+    RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME,
+    'Russian',
+    'English'
+  );
+  report(91, 'Registering noun data with DuckDB...');
   await db.registerFileBuffer(NOUN_FILE_NAME, nounBuffer);
-  report(90, 'Preparing searchable noun data...');
+  report(92, 'Preparing searchable noun data...');
 
   await conn.query(`
     CREATE OR REPLACE VIEW nouns AS
@@ -350,13 +431,11 @@ async function initDuckDb(onProgress = () => {}) {
   `);
   report(94, 'Preparing translations...');
 
-  const translationValues = translations
-    .map(({ source, target }) => `('${escapeSql(source)}', '${escapeSql(target)}')`)
-    .join(', ');
+  const translationValues = buildValuesSql(translations);
 
-  const russianTranslationValues = russianTranslations
-    .map(({ source, target }) => `('${escapeSql(source.toLowerCase())}', '${escapeSql(target)}')`)
-    .join(', ');
+  const russianTranslationValues = buildValuesSql(russianTranslations);
+  const englishGermanTranslationValues = buildValuesSql(englishGermanTranslations);
+  const russianEnglishTranslationValues = buildValuesSql(russianEnglishTranslations);
 
   await conn.query(`
     CREATE OR REPLACE TABLE translations AS
@@ -373,6 +452,22 @@ async function initDuckDb(onProgress = () => {}) {
       lower(trim(CAST(english AS VARCHAR))) AS english_key,
       trim(CAST(russian AS VARCHAR)) AS russian
     FROM (VALUES ${russianTranslationValues}) AS source(english, russian);
+  `);
+
+  await conn.query(`
+    CREATE OR REPLACE TABLE english_german_translations AS
+    SELECT DISTINCT
+      lower(trim(CAST(english AS VARCHAR))) AS english_key,
+      trim(CAST(german AS VARCHAR)) AS german
+    FROM (VALUES ${englishGermanTranslationValues}) AS source(english, german);
+  `);
+
+  await conn.query(`
+    CREATE OR REPLACE TABLE russian_english_translations AS
+    SELECT DISTINCT
+      lower(trim(CAST(russian AS VARCHAR))) AS russian_key,
+      trim(CAST(english AS VARCHAR)) AS english
+    FROM (VALUES ${russianEnglishTranslationValues}) AS source(russian, english);
   `);
   report(99, 'Finalizing noun search...');
 
@@ -530,6 +625,46 @@ async function queryTypeaheadSuggestions(conn, rawTerm) {
     .slice(0, 10);
 }
 
+async function queryTranslation(conn, directionId, rawTerm) {
+  const direction = TRANSLATION_DIRECTIONS.find((item) => item.id === directionId) || TRANSLATION_DIRECTIONS[0];
+  const term = normalizeInput(rawTerm);
+
+  if (!term) {
+    return { direction, exact: '', suggestions: [] };
+  }
+
+  const escapedTerm = escapeSql(term.toLowerCase());
+  const exactSql = `
+    SELECT string_agg(DISTINCT ${direction.targetColumn}, ', ' ORDER BY ${direction.targetColumn}) AS translation
+    FROM ${direction.table}
+    WHERE ${direction.sourceColumn} = '${escapedTerm}';
+  `;
+
+  const exactRow = (await conn.query(exactSql)).toArray()[0]?.toJSON();
+  const exact = exactRow?.translation || '';
+
+  if (exact) {
+    return { direction, exact, suggestions: [] };
+  }
+
+  const suggestionSql = `
+    SELECT
+      ${direction.sourceColumn} AS source,
+      string_agg(DISTINCT ${direction.targetColumn}, ', ' ORDER BY ${direction.targetColumn}) AS translation
+    FROM ${direction.table}
+    WHERE ${direction.sourceColumn} LIKE '${escapedTerm}%'
+    GROUP BY ${direction.sourceColumn}
+    ORDER BY length(${direction.sourceColumn}), ${direction.sourceColumn}
+    LIMIT 8;
+  `;
+
+  const suggestions = (await conn.query(suggestionSql))
+    .toArray()
+    .map((row) => row.toJSON());
+
+  return { direction, exact: '', suggestions };
+}
+
 function ResultCard({ row, subtle = false }) {
   const articles = getArticles(row);
   const displayNoun = getDisplayNoun(row);
@@ -558,6 +693,7 @@ function ResultCard({ row, subtle = false }) {
 }
 
 function App() {
+  const [activeTab, setActiveTab] = useState('articles');
   const [readyState, setReadyState] = useState('loading');
   const [status, setStatus] = useState('Loading DuckDB and local data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -568,6 +704,11 @@ function App() {
   const [suppressedSuggestionTerm, setSuppressedSuggestionTerm] = useState('');
   const [result, setResult] = useState({ exact: [], suggestions: [] });
   const [lastQuery, setLastQuery] = useState('');
+  const [translationTerm, setTranslationTerm] = useState('');
+  const [translationDirection, setTranslationDirection] = useState(TRANSLATION_DIRECTIONS[0].id);
+  const [translationResult, setTranslationResult] = useState({ exact: '', suggestions: [] });
+  const [lastTranslationQuery, setLastTranslationQuery] = useState('');
+  const [isTranslating, setIsTranslating] = useState(false);
   const dbRef = useRef(null);
   const connRef = useRef(null);
   const suggestionRequestRef = useRef(0);
@@ -613,6 +754,7 @@ function App() {
 
     if (
       readyState !== 'ready' ||
+      activeTab !== 'articles' ||
       !connRef.current ||
       normalized.length <= 1 ||
       normalized === suppressedSuggestionTerm
@@ -647,7 +789,7 @@ function App() {
       isActive = false;
       window.clearTimeout(timeoutId);
     };
-  }, [readyState, searchTerm, suppressedSuggestionTerm]);
+  }, [activeTab, readyState, searchTerm, suppressedSuggestionTerm]);
 
   const helperText = useMemo(() => {
     if (readyState === 'loading') {
@@ -658,8 +800,17 @@ function App() {
       return 'The local data could not be loaded.';
     }
 
+    if (activeTab === 'translation') {
+      return 'Translate individual words between German, English, and Russian using the local JSON dictionaries.';
+    }
+
     return 'Search exact German nouns such as Haus, Katze, Baum, or Mädchen to see the article and English translation when available.';
-  }, [readyState]);
+  }, [activeTab, readyState]);
+
+  const selectedTranslationDirection = useMemo(
+    () => TRANSLATION_DIRECTIONS.find((direction) => direction.id === translationDirection) || TRANSLATION_DIRECTIONS[0],
+    [translationDirection]
+  );
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -713,6 +864,35 @@ function App() {
     }
   }
 
+  async function handleTranslationSubmit(event) {
+    event.preventDefault();
+    if (readyState !== 'ready' || !connRef.current) {
+      return;
+    }
+
+    const normalized = normalizeInput(translationTerm);
+    if (!normalized) {
+      setTranslationResult({ exact: '', suggestions: [] });
+      setLastTranslationQuery('');
+      return;
+    }
+
+    setIsTranslating(true);
+    setStatus('Running translation query...');
+    setLastTranslationQuery(normalized);
+
+    try {
+      const nextResult = await queryTranslation(connRef.current, translationDirection, normalized);
+      setTranslationResult(nextResult);
+      setStatus('Ready');
+    } catch (error) {
+      setTranslationResult({ exact: '', suggestions: [] });
+      setStatus(error?.message || String(error));
+    } finally {
+      setIsTranslating(false);
+    }
+  }
+
   const knownResult = useMemo(
     () => ({
       exact: dedupeRows(result.exact.filter(hasKnownArticle)),
@@ -722,6 +902,8 @@ function App() {
   );
   const showEmpty = lastQuery && !knownResult.exact.length && !knownResult.suggestions.length && !isSearching;
   const showTypeahead = searchTerm.trim().length > 1 && (isSuggesting || typeaheadSuggestions.length > 0);
+  const showTranslationEmpty =
+    lastTranslationQuery && !translationResult.exact && !translationResult.suggestions.length && !isTranslating;
 
   return (
     <main className="app-shell">
@@ -731,67 +913,133 @@ function App() {
             <BookOpen size={26} />
           </div>
           <div>
-            <p className="eyebrow">German noun articles</p>
-            <h1 id="app-title">Der, die oder das?</h1>
+            <p className="eyebrow">{activeTab === 'articles' ? 'German noun articles' : 'Translation only'}</p>
+            <h1 id="app-title">{activeTab === 'articles' ? 'Der, die oder das?' : 'Word translator'}</h1>
           </div>
         </div>
 
-        <form className="search-form" onSubmit={handleSubmit}>
-          <label htmlFor="noun-search">German noun</label>
-          <div className="search-box">
-            <Search size={22} aria-hidden="true" />
-            <input
-              id="noun-search"
-              type="search"
-              value={searchTerm}
-              onChange={(event) => {
-                setSearchTerm(event.target.value);
-                setSuppressedSuggestionTerm('');
-              }}
-              placeholder="Type a noun..."
-              autoComplete="off"
-              aria-autocomplete="list"
-              aria-controls="noun-suggestions"
-              aria-expanded={showTypeahead}
-              disabled={readyState !== 'ready'}
-            />
-            <button type="submit" disabled={readyState !== 'ready' || isSearching}>
-              {isSearching ? <Loader2 className="spin" size={20} /> : <Check size={20} />}
-              <span>Check</span>
-            </button>
-          </div>
+        <div className="tab-switch" role="tablist" aria-label="Search mode">
+          <button
+            aria-selected={activeTab === 'articles'}
+            onClick={() => setActiveTab('articles')}
+            role="tab"
+            type="button"
+          >
+            <BookOpen size={17} />
+            <span>Articles</span>
+          </button>
+          <button
+            aria-selected={activeTab === 'translation'}
+            onClick={() => {
+              setActiveTab('translation');
+              setTypeaheadSuggestions([]);
+            }}
+            role="tab"
+            type="button"
+          >
+            <Languages size={17} />
+            <span>Translation</span>
+          </button>
+        </div>
 
-          {showTypeahead && (
-            <div className="suggestions" id="noun-suggestions" role="listbox" aria-label="Noun suggestions">
-              {isSuggesting && (
-                <div className="suggestion-state">
-                  <Loader2 className="spin" size={16} />
-                  <span>Searching...</span>
-                </div>
-              )}
-
-              {!isSuggesting &&
-                typeaheadSuggestions.map((row, index) => {
-                  const displayNoun = getDisplayNoun(row);
-
-                  return (
-                    <button
-                      className="suggestion-item"
-                      key={`${row.lemma}-${displayNoun}-${index}`}
-                      onClick={() => handleSuggestionClick(row)}
-                      role="option"
-                      type="button"
-                    >
-                      <span className="suggestion-name">
-                        <span>{displayNoun}</span>
-                      </span>
-                      {row.lemma !== displayNoun && <span className="suggestion-lemma">{row.lemma}</span>}
-                    </button>
-                  );
-                })}
+        {activeTab === 'articles' && (
+          <form className="search-form" onSubmit={handleSubmit}>
+            <label htmlFor="noun-search">German noun</label>
+            <div className="search-box">
+              <Search size={22} aria-hidden="true" />
+              <input
+                id="noun-search"
+                type="search"
+                value={searchTerm}
+                onChange={(event) => {
+                  setSearchTerm(event.target.value);
+                  setSuppressedSuggestionTerm('');
+                }}
+                placeholder="Type a noun..."
+                autoComplete="off"
+                aria-autocomplete="list"
+                aria-controls="noun-suggestions"
+                aria-expanded={showTypeahead}
+                disabled={readyState !== 'ready'}
+              />
+              <button type="submit" disabled={readyState !== 'ready' || isSearching}>
+                {isSearching ? <Loader2 className="spin" size={20} /> : <Check size={20} />}
+                <span>Check</span>
+              </button>
             </div>
-          )}
-        </form>
+
+            {showTypeahead && (
+              <div className="suggestions" id="noun-suggestions" role="listbox" aria-label="Noun suggestions">
+                {isSuggesting && (
+                  <div className="suggestion-state">
+                    <Loader2 className="spin" size={16} />
+                    <span>Searching...</span>
+                  </div>
+                )}
+
+                {!isSuggesting &&
+                  typeaheadSuggestions.map((row, index) => {
+                    const displayNoun = getDisplayNoun(row);
+
+                    return (
+                      <button
+                        className="suggestion-item"
+                        key={`${row.lemma}-${displayNoun}-${index}`}
+                        onClick={() => handleSuggestionClick(row)}
+                        role="option"
+                        type="button"
+                      >
+                        <span className="suggestion-name">
+                          <span>{displayNoun}</span>
+                        </span>
+                        {row.lemma !== displayNoun && <span className="suggestion-lemma">{row.lemma}</span>}
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+          </form>
+        )}
+
+        {activeTab === 'translation' && (
+          <form className="search-form translation-form" onSubmit={handleTranslationSubmit}>
+            <label htmlFor="translation-direction">Direction</label>
+            <select
+              id="translation-direction"
+              value={translationDirection}
+              onChange={(event) => {
+                setTranslationDirection(event.target.value);
+                setTranslationResult({ exact: '', suggestions: [] });
+                setLastTranslationQuery('');
+              }}
+              disabled={readyState !== 'ready'}
+            >
+              {TRANSLATION_DIRECTIONS.map((direction) => (
+                <option key={direction.id} value={direction.id}>
+                  {direction.label}
+                </option>
+              ))}
+            </select>
+
+            <label htmlFor="translation-search">{selectedTranslationDirection.inputLabel}</label>
+            <div className="search-box">
+              <Languages size={22} aria-hidden="true" />
+              <input
+                id="translation-search"
+                type="search"
+                value={translationTerm}
+                onChange={(event) => setTranslationTerm(event.target.value)}
+                placeholder={selectedTranslationDirection.placeholder}
+                autoComplete="off"
+                disabled={readyState !== 'ready'}
+              />
+              <button type="submit" disabled={readyState !== 'ready' || isTranslating}>
+                {isTranslating ? <Loader2 className="spin" size={20} /> : <Search size={20} />}
+                <span>Translate</span>
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className={`status status-${readyState}`} role={readyState === 'error' ? 'alert' : 'status'}>
           {readyState === 'error' ? <AlertCircle size={18} /> : <Sparkles size={18} />}
@@ -804,20 +1052,20 @@ function App() {
       </section>
 
       <section className="results-panel" aria-live="polite">
-        {!lastQuery && (
+        {activeTab === 'articles' && !lastQuery && (
           <div className="empty-state">
             <p>Enter a noun to see which article the local data returns.</p>
           </div>
         )}
 
-        {isSearching && (
+        {activeTab === 'articles' && isSearching && (
           <div className="empty-state">
             <Loader2 className="spin" size={30} />
             <p>Querying nouns.csv with DuckDB...</p>
           </div>
         )}
 
-        {!!knownResult.exact.length && !isSearching && (
+        {activeTab === 'articles' && !!knownResult.exact.length && !isSearching && (
           <>
             <div className="section-heading">
               <p>Best match</p>
@@ -831,7 +1079,7 @@ function App() {
           </>
         )}
 
-        {!!knownResult.suggestions.length && !isSearching && (
+        {activeTab === 'articles' && !!knownResult.suggestions.length && !isSearching && (
           <>
             <div className="section-heading">
               <p>No exact match for “{lastQuery}”</p>
@@ -845,10 +1093,66 @@ function App() {
           </>
         )}
 
-        {showEmpty && (
+        {activeTab === 'articles' && showEmpty && (
           <div className="empty-state">
             <AlertCircle size={30} />
             <p>No noun found for “{lastQuery}”.</p>
+          </div>
+        )}
+
+        {activeTab === 'translation' && !lastTranslationQuery && (
+          <div className="empty-state">
+            <p>Choose a direction and enter a word for dictionary translation.</p>
+          </div>
+        )}
+
+        {activeTab === 'translation' && isTranslating && (
+          <div className="empty-state">
+            <Loader2 className="spin" size={30} />
+            <p>Searching local JSON dictionaries...</p>
+          </div>
+        )}
+
+        {activeTab === 'translation' && translationResult.exact && !isTranslating && (
+          <>
+            <div className="section-heading">
+              <p>{translationResult.direction?.label || selectedTranslationDirection.label}</p>
+              <span>Exact match</span>
+            </div>
+            <article className="result-card translation-card">
+              <p className="translation-source">{lastTranslationQuery}</p>
+              <p className="translation-target">
+                <span>{translationResult.direction?.resultLabel || selectedTranslationDirection.resultLabel}</span>
+                {translationResult.exact}
+              </p>
+            </article>
+          </>
+        )}
+
+        {activeTab === 'translation' && !!translationResult.suggestions.length && !isTranslating && (
+          <>
+            <div className="section-heading">
+              <p>No exact match for “{lastTranslationQuery}”</p>
+              <span>Similar entries</span>
+            </div>
+            <div className="result-grid">
+              {translationResult.suggestions.map((row) => (
+                <article className="result-card subtle translation-card" key={row.source}>
+                  <p className="translation-source">{row.source}</p>
+                  <p className="translation-target">
+                    <span>{translationResult.direction?.resultLabel || selectedTranslationDirection.resultLabel}</span>
+                    {row.translation}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+
+        {activeTab === 'translation' && showTranslationEmpty && (
+          <div className="empty-state">
+            <AlertCircle size={30} />
+            <p>No translation found for “{lastTranslationQuery}”.</p>
           </div>
         )}
       </section>
