@@ -17,6 +17,7 @@ const BUNDLES = {
 const GENUS_COLUMNS = ['genus', 'genus 1', 'genus 2', 'genus 3', 'genus 4'];
 const NOUN_FILE_NAME = 'nouns.csv';
 const TRANSLATION_FILE_NAME = 'german_english.json';
+const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
 const LOOKUP_COLUMNS = [
   'lemma',
   'nominativ singular',
@@ -150,7 +151,7 @@ function getResultIdentity(row) {
   return `${normalizeArticlesKey(getArticles(row))}:${normalizeLookupTerm(getDisplayNoun(row))}`;
 }
 
-function mergeEnglishValues(...values) {
+function mergeTranslationValues(...values) {
   const translations = new Set();
 
   values
@@ -163,20 +164,20 @@ function mergeEnglishValues(...values) {
   return [...translations].join(', ');
 }
 
-function parseGermanEnglishTranslations(buffer) {
+function parseTranslationObject(buffer, fileName, sourceName, targetName) {
   const jsonText = new TextDecoder().decode(buffer);
   const translations = JSON.parse(jsonText);
 
   if (!translations || Array.isArray(translations) || typeof translations !== 'object') {
-    throw new Error(`${TRANSLATION_FILE_NAME} must be a JSON object of German terms to English translations`);
+    throw new Error(`${fileName} must be a JSON object of ${sourceName} terms to ${targetName} translations`);
   }
 
   return Object.entries(translations)
-    .map(([german, english]) => ({
-      german: String(german || '').trim(),
-      english: String(english || '').trim()
+    .map(([source, target]) => ({
+      source: String(source || '').trim(),
+      target: String(target || '').trim()
     }))
-    .filter(({ german, english }) => german && english);
+    .filter(({ source, target }) => source && target);
 }
 
 function dedupeRows(rows) {
@@ -193,7 +194,8 @@ function dedupeRows(rows) {
 
     rowsByIdentity.set(identity, {
       ...existing,
-      english: mergeEnglishValues(existing.english, row.english)
+      english: mergeTranslationValues(existing.english, row.english),
+      russian: mergeTranslationValues(existing.russian, row.russian)
     });
   }
 
@@ -323,10 +325,21 @@ async function initDuckDb(onProgress = () => {}) {
   const translationBuffer = await fetchWithProgress(assetUrl(TRANSLATION_FILE_NAME), (ratio) => {
     report(77 + Math.round(ratio * 8), `Downloading ${TRANSLATION_FILE_NAME}...`);
   }, TRANSLATION_FILE_NAME);
-  report(85, 'Parsing English translations...');
+  report(85, `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
 
-  const translations = parseGermanEnglishTranslations(translationBuffer);
-  report(88, 'Registering noun data with DuckDB...');
+  const russianTranslationBuffer = await fetchWithProgress(assetUrl(RUSSIAN_TRANSLATION_FILE_NAME), (ratio) => {
+    report(85 + Math.round(ratio * 3), `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
+  }, RUSSIAN_TRANSLATION_FILE_NAME);
+  report(88, 'Parsing translations...');
+
+  const translations = parseTranslationObject(translationBuffer, TRANSLATION_FILE_NAME, 'German', 'English');
+  const russianTranslations = parseTranslationObject(
+    russianTranslationBuffer,
+    RUSSIAN_TRANSLATION_FILE_NAME,
+    'English',
+    'Russian'
+  );
+  report(89, 'Registering noun data with DuckDB...');
   await db.registerFileBuffer(NOUN_FILE_NAME, nounBuffer);
   report(90, 'Preparing searchable noun data...');
 
@@ -335,10 +348,14 @@ async function initDuckDb(onProgress = () => {}) {
     SELECT *
     FROM read_csv_auto('${NOUN_FILE_NAME}', header = true, ignore_errors = true);
   `);
-  report(94, 'Preparing English translations...');
+  report(94, 'Preparing translations...');
 
   const translationValues = translations
-    .map(({ german, english }) => `('${escapeSql(german)}', '${escapeSql(english)}')`)
+    .map(({ source, target }) => `('${escapeSql(source)}', '${escapeSql(target)}')`)
+    .join(', ');
+
+  const russianTranslationValues = russianTranslations
+    .map(({ source, target }) => `('${escapeSql(source.toLowerCase())}', '${escapeSql(target)}')`)
     .join(', ');
 
   await conn.query(`
@@ -348,6 +365,14 @@ async function initDuckDb(onProgress = () => {}) {
       lower(trim(CAST(english AS VARCHAR))) AS english_key,
       trim(CAST(english AS VARCHAR)) AS english
     FROM (VALUES ${translationValues}) AS source(german, english);
+  `);
+
+  await conn.query(`
+    CREATE OR REPLACE TABLE russian_translations AS
+    SELECT DISTINCT
+      lower(trim(CAST(english AS VARCHAR))) AS english_key,
+      trim(CAST(russian AS VARCHAR)) AS russian
+    FROM (VALUES ${russianTranslationValues}) AS source(english, russian);
   `);
   report(99, 'Finalizing noun search...');
 
@@ -364,7 +389,7 @@ async function enrichRowsWithTranslations(conn, rows) {
   );
 
   if (!lookupValues.length) {
-    return rows.map((row) => ({ ...row, english: '' }));
+    return rows.map((row) => ({ ...row, english: '', russian: '' }));
   }
 
   const translationSql = `
@@ -376,30 +401,35 @@ async function enrichRowsWithTranslations(conn, rows) {
       SELECT
         lookup.row_index,
         translations.english,
+        russian_translations.russian,
         0 AS source_rank,
         1000 AS hits,
         length(translations.english) AS token_length
       FROM lookup
       JOIN translations ON translations.german_key = lookup.term
+      LEFT JOIN russian_translations ON russian_translations.english_key = translations.english_key
     ),
     phrase_matches AS (
       SELECT
         lookup.row_index,
         regexp_replace(token, '[^a-z]', '', 'g') AS english,
+        russian_translations.russian,
         1 AS source_rank,
         count(*) AS hits,
         length(regexp_replace(token, '[^a-z]', '', 'g')) AS token_length
       FROM lookup
       JOIN translations ON (' ' || translations.german_key || ' ') LIKE ('% ' || lookup.term || ' %')
       CROSS JOIN unnest(string_split(translations.english_key, ' ')) AS english_tokens(token)
+      LEFT JOIN russian_translations ON russian_translations.english_key = regexp_replace(token, '[^a-z]', '', 'g')
       WHERE length(regexp_replace(token, '[^a-z]', '', 'g')) > 2
         AND regexp_replace(token, '[^a-z]', '', 'g') NOT IN (${ENGLISH_STOP_WORDS.map((word) => `'${word}'`).join(', ')})
-      GROUP BY lookup.row_index, regexp_replace(token, '[^a-z]', '', 'g')
+      GROUP BY lookup.row_index, regexp_replace(token, '[^a-z]', '', 'g'), russian_translations.russian
     ),
     ranked_matches AS (
       SELECT
         row_index,
         english,
+        russian,
         row_number() OVER (
           PARTITION BY row_index
           ORDER BY source_rank, hits DESC, token_length, english
@@ -412,7 +442,8 @@ async function enrichRowsWithTranslations(conn, rows) {
     )
     SELECT
       row_index,
-      string_agg(DISTINCT english, ', ' ORDER BY english) AS english
+      string_agg(DISTINCT english, ', ' ORDER BY english) AS english,
+      string_agg(DISTINCT russian, ', ' ORDER BY russian) FILTER (WHERE russian IS NOT NULL AND russian <> '') AS russian
     FROM ranked_matches
     WHERE rank = 1
     GROUP BY row_index;
@@ -421,13 +452,17 @@ async function enrichRowsWithTranslations(conn, rows) {
   const translationsByIndex = new Map(
     (await conn.query(translationSql)).toArray().map((row) => {
       const translation = row.toJSON();
-      return [Number(translation.row_index), translation.english || ''];
+      return [Number(translation.row_index), {
+        english: translation.english || '',
+        russian: translation.russian || ''
+      }];
     })
   );
 
   return dedupeRows(rows.map((row, index) => ({
     ...row,
-    english: translationsByIndex.get(index) || ''
+    english: translationsByIndex.get(index)?.english || '',
+    russian: translationsByIndex.get(index)?.russian || ''
   })));
 }
 
@@ -516,6 +551,7 @@ function ResultCard({ row, subtle = false }) {
         </p>
         {row.lemma !== displayNoun && <p className="lemma">Lemma: {row.lemma}</p>}
         {row.english && <p className="translation">English: {row.english}</p>}
+        {row.russian && <p className="translation">Russian: {row.russian}</p>}
       </div>
     </article>
   );
