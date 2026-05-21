@@ -3,31 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } from 'lucide-react';
 import './styles.css';
 
-const BUNDLES = {
-  mvp: {
-    mainModule: assetUrl('duckdb-mvp.wasm'),
-    mainWorker: assetUrl('duckdb-browser-mvp.worker.js')
-  },
-  eh: {
-    mainModule: assetUrl('duckdb-eh.wasm'),
-    mainWorker: assetUrl('duckdb-browser-eh.worker.js')
-  }
-};
-
-const GENUS_COLUMNS = ['genus', 'genus 1', 'genus 2', 'genus 3', 'genus 4'];
-const NOUN_FILE_NAME = 'nouns.csv';
+const NOUN_FILE_NAME = 'nouns.json';
 const TRANSLATION_FILE_NAME = 'german_english.json';
 const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
 const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
 const RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME = 'russian_english.json';
-const LOOKUP_COLUMNS = [
-  'lemma',
-  'nominativ singular',
-  'nominativ singular 1',
-  'nominativ singular 2',
-  'nominativ singular 3',
-  'nominativ singular 4'
-];
 
 const ARTICLE_BY_GENUS = {
   m: 'der',
@@ -35,98 +15,13 @@ const ARTICLE_BY_GENUS = {
   n: 'das'
 };
 
-const ENGLISH_STOP_WORDS = [
-  'a',
-  'about',
-  'after',
-  'all',
-  'am',
-  'an',
-  'and',
-  'are',
-  'as',
-  'at',
-  'be',
-  'been',
-  'but',
-  'by',
-  'can',
-  'did',
-  'do',
-  'does',
-  'dont',
-  'for',
-  'from',
-  'had',
-  'has',
-  'have',
-  'he',
-  'her',
-  'here',
-  'him',
-  'his',
-  'i',
-  'im',
-  'in',
-  'is',
-  'it',
-  'its',
-  'john',
-  'just',
-  'mary',
-  'me',
-  'my',
-  'of',
-  'on',
-  'our',
-  'she',
-  'that',
-  'the',
-  'their',
-  'them',
-  'there',
-  'they',
-  'this',
-  'to',
-  'tom',
-  'toms',
-  'was',
-  'we',
-  'were',
-  'what',
-  'when',
-  'where',
-  'who',
-  'why',
-  'with',
-  'you',
-  'your'
-];
-
-const SELECT_COLUMNS = `
-  lemma,
-  pos,
-  genus,
-  "genus 1",
-  "genus 2",
-  "genus 3",
-  "genus 4",
-  "nominativ singular",
-  "nominativ singular 1",
-  "nominativ singular 2",
-  "nominativ singular 3",
-  "nominativ singular 4"
-`;
-
 const TRANSLATION_DIRECTIONS = [
   {
     id: 'german-english',
     label: 'German to English',
     inputLabel: 'German word',
     placeholder: 'Haus',
-    table: 'translations',
-    sourceColumn: 'german_key',
-    targetColumn: 'english',
+    dictionary: 'germanEnglish',
     resultLabel: 'English'
   },
   {
@@ -134,9 +29,7 @@ const TRANSLATION_DIRECTIONS = [
     label: 'English to German',
     inputLabel: 'English word',
     placeholder: 'house',
-    table: 'english_german_translations',
-    sourceColumn: 'english_key',
-    targetColumn: 'german',
+    dictionary: 'englishGerman',
     resultLabel: 'German'
   },
   {
@@ -144,9 +37,7 @@ const TRANSLATION_DIRECTIONS = [
     label: 'English to Russian',
     inputLabel: 'English word',
     placeholder: 'tree',
-    table: 'russian_translations',
-    sourceColumn: 'english_key',
-    targetColumn: 'russian',
+    dictionary: 'englishRussian',
     resultLabel: 'Russian'
   },
   {
@@ -154,19 +45,13 @@ const TRANSLATION_DIRECTIONS = [
     label: 'Russian to English',
     inputLabel: 'Russian word',
     placeholder: 'дом',
-    table: 'russian_english_translations',
-    sourceColumn: 'russian_key',
-    targetColumn: 'english',
+    dictionary: 'russianEnglish',
     resultLabel: 'English'
   }
 ];
 
 function assetUrl(path) {
   return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
-}
-
-function escapeSql(value) {
-  return value.replace(/'/g, "''");
 }
 
 function normalizeInput(value) {
@@ -209,9 +94,7 @@ function mergeTranslationValues(...values) {
   return [...translations].join(', ');
 }
 
-function parseTranslationObject(buffer, fileName, sourceName, targetName) {
-  const jsonText = new TextDecoder().decode(buffer);
-  const translations = JSON.parse(jsonText);
+function parseTranslationObject(translations, fileName, sourceName, targetName) {
 
   if (!translations || Array.isArray(translations) || typeof translations !== 'object') {
     throw new Error(`${fileName} must be a JSON object of ${sourceName} terms to ${targetName} translations`);
@@ -223,6 +106,40 @@ function parseTranslationObject(buffer, fileName, sourceName, targetName) {
       target: String(target || '').trim()
     }))
     .filter(({ source, target }) => source && target);
+}
+
+function createTranslationMap(translations) {
+  const map = new Map();
+
+  for (const { source, target } of translations) {
+    const key = normalizeLookupTerm(source);
+    const existing = map.get(key);
+    map.set(key, mergeTranslationValues(existing, target));
+  }
+
+  return map;
+}
+
+function addNounIndexEntry(index, key, row) {
+  if (!key) {
+    return;
+  }
+
+  const existing = index.get(key) || [];
+  existing.push(row);
+  index.set(key, existing);
+}
+
+function createNounIndex(nouns) {
+  const index = new Map();
+
+  for (const row of nouns) {
+    const key = normalizeLookupTerm(row.lemma);
+    addNounIndexEntry(index, key, row);
+    addNounIndexEntry(index, foldGermanTerm(key), row);
+  }
+
+  return index;
 }
 
 function dedupeRows(rows) {
@@ -239,33 +156,42 @@ function dedupeRows(rows) {
 
     rowsByIdentity.set(identity, {
       ...existing,
-      english: mergeTranslationValues(existing.english, row.english),
-      russian: mergeTranslationValues(existing.russian, row.russian)
+      english: mergeTranslationValues(existing.english, row.english)
     });
   }
 
   return [...rowsByIdentity.values()];
 }
 
+function getEnglishForNoun(data, row) {
+  const normalized = normalizeLookupTerm(row.lemma);
+  return data.translationMaps.germanEnglish.get(normalized) || data.translationMaps.germanEnglish.get(foldGermanTerm(normalized)) || '';
+}
+
+function enrichRowsWithEnglish(data, rows) {
+  return dedupeRows(rows.map((row) => ({
+    ...row,
+    english: getEnglishForNoun(data, row)
+  })));
+}
+
 function getArticles(row) {
   const articles = new Set();
+  const value = row.genus;
 
-  for (const column of GENUS_COLUMNS) {
-    const value = row[column];
-    if (!value) {
-      continue;
-    }
-
-    String(value)
-      .split(/[,;/\s]+/)
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-      .forEach((genus) => {
-        if (ARTICLE_BY_GENUS[genus]) {
-          articles.add(ARTICLE_BY_GENUS[genus]);
-        }
-      });
+  if (!value) {
+    return [];
   }
+
+  String(value)
+    .split(/[,;/\s]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .forEach((genus) => {
+      if (ARTICLE_BY_GENUS[genus]) {
+        articles.add(ARTICLE_BY_GENUS[genus]);
+      }
+    });
 
   return [...articles];
 }
@@ -279,23 +205,7 @@ function articleClass(article) {
 }
 
 function getDisplayNoun(row) {
-  return row['nominativ singular'] || row.lemma;
-}
-
-function getTranslationLookupTerms(row) {
-  const terms = new Set();
-
-  for (const column of LOOKUP_COLUMNS) {
-    const normalized = normalizeLookupTerm(row[column]);
-    if (!normalized) {
-      continue;
-    }
-
-    terms.add(normalized);
-    terms.add(foldGermanTerm(normalized));
-  }
-
-  return [...terms];
+  return row.lemma;
 }
 
 async function fetchWithProgress(url, onProgress, fileName = 'file') {
@@ -335,297 +245,146 @@ async function fetchWithProgress(url, onProgress, fileName = 'file') {
   return buffer;
 }
 
-function buildValuesSql(translations) {
-  return translations
-    .map(({ source, target }) => `('${escapeSql(source)}', '${escapeSql(target)}')`)
-    .join(', ');
+function parseJsonBuffer(buffer, fileName) {
+  try {
+    return JSON.parse(new TextDecoder().decode(buffer));
+  } catch {
+    throw new Error(`${fileName} is not valid JSON`);
+  }
 }
 
-async function initDuckDb(onProgress = () => {}) {
+async function initAppData(onProgress = () => {}) {
   const report = (progress, status) => {
     onProgress({ progress, status });
   };
 
-  report(5, 'Loading DuckDB module...');
-  const duckdbModuleUrl = assetUrl('duckdb-browser.mjs');
-  const duckdb = await import(/* @vite-ignore */ duckdbModuleUrl);
-  report(15, 'Choosing the best DuckDB bundle...');
-
-  const bundle = await duckdb.selectBundle(BUNDLES);
-  report(25, 'Starting DuckDB worker...');
-
-  const worker = await duckdb.createWorker(bundle.mainWorker);
-  report(35, 'Starting DuckDB worker...');
-
-  const logger = new duckdb.ConsoleLogger();
-  const db = new duckdb.AsyncDuckDB(logger, worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker, (event) => {
-    const ratio = event.bytesTotal ? event.bytesLoaded / event.bytesTotal : 0;
-    report(35 + Math.round(ratio * 25), 'Initializing DuckDB engine...');
-  });
-  report(60, 'Opening DuckDB connection...');
-
-  const conn = await db.connect();
-  report(65, `Downloading ${NOUN_FILE_NAME}...`);
+  report(10, `Downloading ${NOUN_FILE_NAME}...`);
 
   const nounBuffer = await fetchWithProgress(assetUrl(NOUN_FILE_NAME), (ratio) => {
-    report(65 + Math.round(ratio * 12), `Downloading ${NOUN_FILE_NAME}...`);
+    report(10 + Math.round(ratio * 30), `Downloading ${NOUN_FILE_NAME}...`);
   }, NOUN_FILE_NAME);
-  report(77, `Downloading ${TRANSLATION_FILE_NAME}...`);
+  report(42, `Downloading ${TRANSLATION_FILE_NAME}...`);
 
   const translationBuffer = await fetchWithProgress(assetUrl(TRANSLATION_FILE_NAME), (ratio) => {
-    report(77 + Math.round(ratio * 8), `Downloading ${TRANSLATION_FILE_NAME}...`);
+    report(42 + Math.round(ratio * 12), `Downloading ${TRANSLATION_FILE_NAME}...`);
   }, TRANSLATION_FILE_NAME);
-  report(85, `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
+  report(56, `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
 
   const russianTranslationBuffer = await fetchWithProgress(assetUrl(RUSSIAN_TRANSLATION_FILE_NAME), (ratio) => {
-    report(85 + Math.round(ratio * 3), `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
+    report(56 + Math.round(ratio * 18), `Downloading ${RUSSIAN_TRANSLATION_FILE_NAME}...`);
   }, RUSSIAN_TRANSLATION_FILE_NAME);
-  report(88, `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
+  report(76, `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
 
   const englishGermanTranslationBuffer = await fetchWithProgress(
     assetUrl(ENGLISH_GERMAN_TRANSLATION_FILE_NAME),
     (ratio) => {
-      report(88 + Math.round(ratio), `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
+      report(76 + Math.round(ratio * 7), `Downloading ${ENGLISH_GERMAN_TRANSLATION_FILE_NAME}...`);
     },
     ENGLISH_GERMAN_TRANSLATION_FILE_NAME
   );
-  report(89, `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
+  report(84, `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
 
   const russianEnglishTranslationBuffer = await fetchWithProgress(
     assetUrl(RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME),
     (ratio) => {
-      report(89 + Math.round(ratio), `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
+      report(84 + Math.round(ratio * 10), `Downloading ${RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME}...`);
     },
     RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME
   );
-  report(90, 'Parsing translations...');
+  report(95, 'Preparing local indexes...');
 
-  const translations = parseTranslationObject(translationBuffer, TRANSLATION_FILE_NAME, 'German', 'English');
+  const nouns = parseJsonBuffer(nounBuffer, NOUN_FILE_NAME)
+    .map((row) => ({
+      lemma: String(row.lemma || '').trim(),
+      genus: String(row.genus || '').trim()
+    }))
+    .filter((row) => row.lemma);
+  const translations = parseTranslationObject(
+    parseJsonBuffer(translationBuffer, TRANSLATION_FILE_NAME),
+    TRANSLATION_FILE_NAME,
+    'German',
+    'English'
+  );
   const russianTranslations = parseTranslationObject(
-    russianTranslationBuffer,
+    parseJsonBuffer(russianTranslationBuffer, RUSSIAN_TRANSLATION_FILE_NAME),
     RUSSIAN_TRANSLATION_FILE_NAME,
     'English',
     'Russian'
   );
   const englishGermanTranslations = parseTranslationObject(
-    englishGermanTranslationBuffer,
+    parseJsonBuffer(englishGermanTranslationBuffer, ENGLISH_GERMAN_TRANSLATION_FILE_NAME),
     ENGLISH_GERMAN_TRANSLATION_FILE_NAME,
     'English',
     'German'
   );
   const russianEnglishTranslations = parseTranslationObject(
-    russianEnglishTranslationBuffer,
+    parseJsonBuffer(russianEnglishTranslationBuffer, RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME),
     RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME,
     'Russian',
     'English'
   );
-  report(91, 'Registering noun data with DuckDB...');
-  await db.registerFileBuffer(NOUN_FILE_NAME, nounBuffer);
-  report(92, 'Preparing searchable noun data...');
 
-  await conn.query(`
-    CREATE OR REPLACE VIEW nouns AS
-    SELECT *
-    FROM read_csv_auto('${NOUN_FILE_NAME}', header = true, ignore_errors = true);
-  `);
-  report(94, 'Preparing translations...');
+  report(99, 'Finalizing local search...');
 
-  const translationValues = buildValuesSql(translations);
-
-  const russianTranslationValues = buildValuesSql(russianTranslations);
-  const englishGermanTranslationValues = buildValuesSql(englishGermanTranslations);
-  const russianEnglishTranslationValues = buildValuesSql(russianEnglishTranslations);
-
-  await conn.query(`
-    CREATE OR REPLACE TABLE translations AS
-    SELECT DISTINCT
-      lower(trim(CAST(german AS VARCHAR))) AS german_key,
-      lower(trim(CAST(english AS VARCHAR))) AS english_key,
-      trim(CAST(english AS VARCHAR)) AS english
-    FROM (VALUES ${translationValues}) AS source(german, english);
-  `);
-
-  await conn.query(`
-    CREATE OR REPLACE TABLE russian_translations AS
-    SELECT DISTINCT
-      lower(trim(CAST(english AS VARCHAR))) AS english_key,
-      trim(CAST(russian AS VARCHAR)) AS russian
-    FROM (VALUES ${russianTranslationValues}) AS source(english, russian);
-  `);
-
-  await conn.query(`
-    CREATE OR REPLACE TABLE english_german_translations AS
-    SELECT DISTINCT
-      lower(trim(CAST(english AS VARCHAR))) AS english_key,
-      trim(CAST(german AS VARCHAR)) AS german
-    FROM (VALUES ${englishGermanTranslationValues}) AS source(english, german);
-  `);
-
-  await conn.query(`
-    CREATE OR REPLACE TABLE russian_english_translations AS
-    SELECT DISTINCT
-      lower(trim(CAST(russian AS VARCHAR))) AS russian_key,
-      trim(CAST(english AS VARCHAR)) AS english
-    FROM (VALUES ${russianEnglishTranslationValues}) AS source(russian, english);
-  `);
-  report(99, 'Finalizing noun search...');
-
-  return { db, conn };
+  return {
+    nouns,
+    nounIndex: createNounIndex(nouns),
+    translationMaps: {
+      germanEnglish: createTranslationMap(translations),
+      englishRussian: createTranslationMap(russianTranslations),
+      englishGerman: createTranslationMap(englishGermanTranslations),
+      russianEnglish: createTranslationMap(russianEnglishTranslations)
+    }
+  };
 }
 
-async function enrichRowsWithTranslations(conn, rows) {
-  if (!rows.length) {
-    return [];
-  }
-
-  const lookupValues = rows.flatMap((row, rowIndex) =>
-    getTranslationLookupTerms(row).map((term) => `(${rowIndex}, '${escapeSql(term)}')`)
-  );
-
-  if (!lookupValues.length) {
-    return rows.map((row) => ({ ...row, english: '', russian: '' }));
-  }
-
-  const translationSql = `
-    WITH
-    lookup(row_index, term) AS (
-      VALUES ${lookupValues.join(', ')}
-    ),
-    exact_matches AS (
-      SELECT
-        lookup.row_index,
-        translations.english,
-        russian_translations.russian,
-        0 AS source_rank,
-        1000 AS hits,
-        length(translations.english) AS token_length
-      FROM lookup
-      JOIN translations ON translations.german_key = lookup.term
-      LEFT JOIN russian_translations ON russian_translations.english_key = translations.english_key
-    ),
-    phrase_matches AS (
-      SELECT
-        lookup.row_index,
-        regexp_replace(token, '[^a-z]', '', 'g') AS english,
-        russian_translations.russian,
-        1 AS source_rank,
-        count(*) AS hits,
-        length(regexp_replace(token, '[^a-z]', '', 'g')) AS token_length
-      FROM lookup
-      JOIN translations ON (' ' || translations.german_key || ' ') LIKE ('% ' || lookup.term || ' %')
-      CROSS JOIN unnest(string_split(translations.english_key, ' ')) AS english_tokens(token)
-      LEFT JOIN russian_translations ON russian_translations.english_key = regexp_replace(token, '[^a-z]', '', 'g')
-      WHERE length(regexp_replace(token, '[^a-z]', '', 'g')) > 2
-        AND regexp_replace(token, '[^a-z]', '', 'g') NOT IN (${ENGLISH_STOP_WORDS.map((word) => `'${word}'`).join(', ')})
-      GROUP BY lookup.row_index, regexp_replace(token, '[^a-z]', '', 'g'), russian_translations.russian
-    ),
-    ranked_matches AS (
-      SELECT
-        row_index,
-        english,
-        russian,
-        row_number() OVER (
-          PARTITION BY row_index
-          ORDER BY source_rank, hits DESC, token_length, english
-        ) AS rank
-      FROM (
-        SELECT * FROM exact_matches
-        UNION ALL
-        SELECT * FROM phrase_matches
-      )
-    )
-    SELECT
-      row_index,
-      string_agg(DISTINCT english, ', ' ORDER BY english) AS english,
-      string_agg(DISTINCT russian, ', ' ORDER BY russian) FILTER (WHERE russian IS NOT NULL AND russian <> '') AS russian
-    FROM ranked_matches
-    WHERE rank = 1
-    GROUP BY row_index;
-  `;
-
-  const translationsByIndex = new Map(
-    (await conn.query(translationSql)).toArray().map((row) => {
-      const translation = row.toJSON();
-      return [Number(translation.row_index), {
-        english: translation.english || '',
-        russian: translation.russian || ''
-      }];
-    })
-  );
-
-  return dedupeRows(rows.map((row, index) => ({
-    ...row,
-    english: translationsByIndex.get(index)?.english || '',
-    russian: translationsByIndex.get(index)?.russian || ''
-  })));
-}
-
-async function queryNouns(conn, rawTerm) {
+async function queryNouns(data, rawTerm) {
   const term = normalizeInput(rawTerm);
   if (!term) {
     return { exact: [], suggestions: [] };
   }
 
-  const escapedTerm = escapeSql(term.toLowerCase());
-
-  const exactSql = `
-    SELECT ${SELECT_COLUMNS}
-    FROM nouns
-    WHERE lower(lemma) = '${escapedTerm}'
-      OR lower("nominativ singular") = '${escapedTerm}'
-      OR lower("nominativ singular 1") = '${escapedTerm}'
-      OR lower("nominativ singular 2") = '${escapedTerm}'
-      OR lower("nominativ singular 3") = '${escapedTerm}'
-      OR lower("nominativ singular 4") = '${escapedTerm}'
-    LIMIT 25;
-  `;
-
-  const exactRows = (await conn.query(exactSql)).toArray().map((row) => row.toJSON());
-  const exact = await enrichRowsWithTranslations(conn, exactRows);
+  const lookupTerm = normalizeLookupTerm(term);
+  const exactRows = (data.nounIndex.get(lookupTerm) || data.nounIndex.get(foldGermanTerm(lookupTerm)) || []).slice(0, 25);
+  const exact = enrichRowsWithEnglish(data, exactRows);
   if (exact.length) {
     return { exact, suggestions: [] };
   }
 
-  const suggestionSql = `
-    SELECT ${SELECT_COLUMNS}
-    FROM nouns
-    WHERE lower(lemma) LIKE '${escapedTerm}%'
-       OR lower("nominativ singular") LIKE '${escapedTerm}%'
-    ORDER BY length(lemma), lemma
-    LIMIT 12;
-  `;
-
-  const suggestionRows = (await conn.query(suggestionSql)).toArray().map((row) => row.toJSON());
-  const suggestions = await enrichRowsWithTranslations(conn, suggestionRows);
+  const foldedTerm = foldGermanTerm(lookupTerm);
+  const suggestionRows = data.nouns
+    .filter((row) => {
+      const lemma = normalizeLookupTerm(row.lemma);
+      return lemma.startsWith(lookupTerm) || foldGermanTerm(lemma).startsWith(foldedTerm);
+    })
+    .sort((a, b) => a.lemma.length - b.lemma.length || a.lemma.localeCompare(b.lemma, 'de'))
+    .slice(0, 12);
+  const suggestions = enrichRowsWithEnglish(data, suggestionRows);
   return { exact: [], suggestions };
 }
 
-async function queryTypeaheadSuggestions(conn, rawTerm) {
+async function queryTypeaheadSuggestions(data, rawTerm) {
   const term = normalizeInput(rawTerm);
   if (term.length <= 1) {
     return [];
   }
 
-  const escapedTerm = escapeSql(term.toLowerCase());
-  const suggestionSql = `
-    SELECT ${SELECT_COLUMNS}
-    FROM nouns
-    WHERE lower(lemma) LIKE '${escapedTerm}%'
-       OR lower("nominativ singular") LIKE '${escapedTerm}%'
-    ORDER BY length(lemma), lemma
-    LIMIT 25;
-  `;
+  const lookupTerm = normalizeLookupTerm(term);
+  const foldedTerm = foldGermanTerm(lookupTerm);
 
-  return (await conn.query(suggestionSql))
-    .toArray()
-    .map((row) => row.toJSON())
+  return data.nouns
+    .filter((row) => {
+      const lemma = normalizeLookupTerm(row.lemma);
+      return lemma.startsWith(lookupTerm) || foldGermanTerm(lemma).startsWith(foldedTerm);
+    })
+    .sort((a, b) => a.lemma.length - b.lemma.length || a.lemma.localeCompare(b.lemma, 'de'))
+    .slice(0, 25)
     .filter(hasKnownArticle)
     .filter((row, index, rows) => rows.findIndex((item) => getResultIdentity(item) === getResultIdentity(row)) === index)
     .slice(0, 10);
 }
 
-async function queryTranslation(conn, directionId, rawTerm) {
+async function queryTranslation(data, directionId, rawTerm) {
   const direction = TRANSLATION_DIRECTIONS.find((item) => item.id === directionId) || TRANSLATION_DIRECTIONS[0];
   const term = normalizeInput(rawTerm);
 
@@ -633,34 +392,19 @@ async function queryTranslation(conn, directionId, rawTerm) {
     return { direction, exact: '', suggestions: [] };
   }
 
-  const escapedTerm = escapeSql(term.toLowerCase());
-  const exactSql = `
-    SELECT string_agg(DISTINCT ${direction.targetColumn}, ', ' ORDER BY ${direction.targetColumn}) AS translation
-    FROM ${direction.table}
-    WHERE ${direction.sourceColumn} = '${escapedTerm}';
-  `;
-
-  const exactRow = (await conn.query(exactSql)).toArray()[0]?.toJSON();
-  const exact = exactRow?.translation || '';
+  const map = data.translationMaps[direction.dictionary];
+  const lookupTerm = normalizeLookupTerm(term);
+  const exact = map.get(lookupTerm) || (direction.dictionary === 'germanEnglish' ? map.get(foldGermanTerm(lookupTerm)) : '');
 
   if (exact) {
     return { direction, exact, suggestions: [] };
   }
 
-  const suggestionSql = `
-    SELECT
-      ${direction.sourceColumn} AS source,
-      string_agg(DISTINCT ${direction.targetColumn}, ', ' ORDER BY ${direction.targetColumn}) AS translation
-    FROM ${direction.table}
-    WHERE ${direction.sourceColumn} LIKE '${escapedTerm}%'
-    GROUP BY ${direction.sourceColumn}
-    ORDER BY length(${direction.sourceColumn}), ${direction.sourceColumn}
-    LIMIT 8;
-  `;
-
-  const suggestions = (await conn.query(suggestionSql))
-    .toArray()
-    .map((row) => row.toJSON());
+  const suggestions = [...map.entries()]
+    .filter(([source]) => source.startsWith(lookupTerm))
+    .sort(([sourceA], [sourceB]) => sourceA.length - sourceB.length || sourceA.localeCompare(sourceB))
+    .slice(0, 8)
+    .map(([source, translation]) => ({ source, translation }));
 
   return { direction, exact: '', suggestions };
 }
@@ -686,7 +430,6 @@ function ResultCard({ row, subtle = false }) {
         </p>
         {row.lemma !== displayNoun && <p className="lemma">Lemma: {row.lemma}</p>}
         {row.english && <p className="translation">English: {row.english}</p>}
-        {row.russian && <p className="translation">Russian: {row.russian}</p>}
       </div>
     </article>
   );
@@ -695,7 +438,7 @@ function ResultCard({ row, subtle = false }) {
 function App() {
   const [activeTab, setActiveTab] = useState('articles');
   const [readyState, setReadyState] = useState('loading');
-  const [status, setStatus] = useState('Loading DuckDB and local data...');
+  const [status, setStatus] = useState('Loading local JSON data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -709,28 +452,24 @@ function App() {
   const [translationResult, setTranslationResult] = useState({ exact: '', suggestions: [] });
   const [lastTranslationQuery, setLastTranslationQuery] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
-  const dbRef = useRef(null);
-  const connRef = useRef(null);
+  const dataRef = useRef(null);
   const suggestionRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    initDuckDb(({ progress, status: nextStatus }) => {
+    initAppData(({ progress, status: nextStatus }) => {
       if (!cancelled) {
         setLoadingProgress(Math.max(0, Math.min(progress, 99)));
         setStatus(nextStatus);
       }
     })
-      .then(({ db, conn }) => {
+      .then((data) => {
         if (cancelled) {
-          conn.close();
-          db.terminate();
           return;
         }
 
-        dbRef.current = db;
-        connRef.current = conn;
+        dataRef.current = data;
         setLoadingProgress(100);
         setStatus('Ready');
         setReadyState('ready');
@@ -742,8 +481,7 @@ function App() {
 
     return () => {
       cancelled = true;
-      connRef.current?.close?.();
-      dbRef.current?.terminate?.();
+      dataRef.current = null;
     };
   }, []);
 
@@ -755,7 +493,7 @@ function App() {
     if (
       readyState !== 'ready' ||
       activeTab !== 'articles' ||
-      !connRef.current ||
+      !dataRef.current ||
       normalized.length <= 1 ||
       normalized === suppressedSuggestionTerm
     ) {
@@ -770,7 +508,7 @@ function App() {
 
     const timeoutId = window.setTimeout(async () => {
       try {
-        const nextSuggestions = await queryTypeaheadSuggestions(connRef.current, normalized);
+        const nextSuggestions = await queryTypeaheadSuggestions(dataRef.current, normalized);
         if (isActive && suggestionRequestRef.current === requestId) {
           setTypeaheadSuggestions(nextSuggestions);
         }
@@ -793,7 +531,7 @@ function App() {
 
   const helperText = useMemo(() => {
     if (readyState === 'loading') {
-      return 'Preparing the in-browser SQL engine.';
+      return 'Loading compact local JSON dictionaries.';
     }
 
     if (readyState === 'error') {
@@ -814,7 +552,7 @@ function App() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    if (readyState !== 'ready' || !connRef.current) {
+    if (readyState !== 'ready' || !dataRef.current) {
       return;
     }
 
@@ -827,12 +565,12 @@ function App() {
     }
 
     setIsSearching(true);
-    setStatus('Running SQL query...');
+    setStatus('Searching local JSON...');
     setLastQuery(normalized);
     setTypeaheadSuggestions([]);
 
     try {
-      const nextResult = await queryNouns(connRef.current, normalized);
+      const nextResult = await queryNouns(dataRef.current, normalized);
       setResult(nextResult);
       setStatus('Ready');
     } catch (error) {
@@ -850,10 +588,10 @@ function App() {
     setTypeaheadSuggestions([]);
     setLastQuery(displayNoun);
     setIsSearching(true);
-    setStatus('Running SQL query...');
+    setStatus('Searching local JSON...');
 
     try {
-      const nextResult = await queryNouns(connRef.current, displayNoun);
+      const nextResult = await queryNouns(dataRef.current, displayNoun);
       setResult(nextResult.exact.length ? nextResult : { exact: [row], suggestions: [] });
       setStatus('Ready');
     } catch (error) {
@@ -866,7 +604,7 @@ function App() {
 
   async function handleTranslationSubmit(event) {
     event.preventDefault();
-    if (readyState !== 'ready' || !connRef.current) {
+    if (readyState !== 'ready' || !dataRef.current) {
       return;
     }
 
@@ -882,7 +620,7 @@ function App() {
     setLastTranslationQuery(normalized);
 
     try {
-      const nextResult = await queryTranslation(connRef.current, translationDirection, normalized);
+      const nextResult = await queryTranslation(dataRef.current, translationDirection, normalized);
       setTranslationResult(nextResult);
       setStatus('Ready');
     } catch (error) {
@@ -918,7 +656,7 @@ function App() {
           </div>
         </div>
 
-        <div className="tab-switch" role="tablist" aria-label="Search mode">
+        <div className="tab-switch tab-switch-hidden" role="tablist" aria-label="Search mode">
           <button
             aria-selected={activeTab === 'articles'}
             onClick={() => setActiveTab('articles')}
@@ -1061,7 +799,7 @@ function App() {
         {activeTab === 'articles' && isSearching && (
           <div className="empty-state">
             <Loader2 className="spin" size={30} />
-            <p>Querying nouns.csv with DuckDB...</p>
+            <p>Searching nouns.json...</p>
           </div>
         )}
 

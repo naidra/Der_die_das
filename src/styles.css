@@ -143,6 +143,10 @@ h1 {
   background: #ffffff;
 }
 
+.tab-switch-hidden {
+  display: none;
+}
+
 .tab-switch button {
   display: inline-flex;
   gap: 7px;
