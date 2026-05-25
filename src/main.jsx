@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, BookOpen, Check, ChevronDown, Languages, Loader2, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } from 'lucide-react';
 import './styles.css';
 
-const NOUN_FILE_NAME = 'nouns.json';
+const NOUN_FILE_NAME = 'german_nouns.json';
+const WORD_FILE_NAME = 'german_words.json';
 const TRANSLATION_FILE_NAME = 'german_english.json';
 const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
 const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
@@ -16,16 +17,60 @@ const ARTICLE_BY_GENUS = {
 };
 
 const DETERMINER_FORMS = [
-  { base: 'ein', forms: { der: 'ein', die: 'eine', das: 'ein' } },
-  { base: 'kein', forms: { der: 'kein', die: 'keine', das: 'kein' } },
-  { base: 'mein', forms: { der: 'mein', die: 'meine', das: 'mein' } },
-  { base: 'dein', forms: { der: 'dein', die: 'deine', das: 'dein' } },
-  { base: 'sein', forms: { der: 'sein', die: 'seine', das: 'sein' } },
-  { base: 'ihr', forms: { der: 'ihr', die: 'ihre', das: 'ihr' } },
-  { base: 'unser', forms: { der: 'unser', die: 'unsere', das: 'unser' } },
-  { base: 'euer', forms: { der: 'euer', die: 'eure', das: 'euer' } },
-  { base: 'Ihr', forms: { der: 'Ihr', die: 'Ihre', das: 'Ihr' } }
+  { base: 'ein', english: 'a / an', forms: { der: 'ein', die: 'eine', das: 'ein' } },
+  { base: 'kein', english: 'no / not a', forms: { der: 'kein', die: 'keine', das: 'kein' } },
+  { base: 'mein', english: 'my', forms: { der: 'mein', die: 'meine', das: 'mein' } },
+  { base: 'dein', english: 'your', forms: { der: 'dein', die: 'deine', das: 'dein' } },
+  { base: 'sein', english: 'his / its', forms: { der: 'sein', die: 'seine', das: 'sein' } },
+  { base: 'ihr', english: 'her / their', forms: { der: 'ihr', die: 'ihre', das: 'ihr' } },
+  { base: 'unser', english: 'our', forms: { der: 'unser', die: 'unsere', das: 'unser' } },
+  { base: 'euer', english: 'your (plural)', forms: { der: 'euer', die: 'eure', das: 'euer' } },
+  { base: 'Ihr', english: 'your (formal)', forms: { der: 'Ihr', die: 'Ihre', das: 'Ihr' } }
 ];
+
+const IRREGULAR_VERB_FORMS = {
+  sein: [
+    ['ich', 'bin'],
+    ['du', 'bist'],
+    ['er/sie/es', 'ist'],
+    ['wir', 'sind'],
+    ['ihr', 'seid'],
+    ['sie/Sie', 'sind']
+  ],
+  haben: [
+    ['ich', 'habe'],
+    ['du', 'hast'],
+    ['er/sie/es', 'hat'],
+    ['wir', 'haben'],
+    ['ihr', 'habt'],
+    ['sie/Sie', 'haben']
+  ],
+  werden: [
+    ['ich', 'werde'],
+    ['du', 'wirst'],
+    ['er/sie/es', 'wird'],
+    ['wir', 'werden'],
+    ['ihr', 'werdet'],
+    ['sie/Sie', 'werden']
+  ],
+  wissen: [
+    ['ich', 'weiß'],
+    ['du', 'weißt'],
+    ['er/sie/es', 'weiß'],
+    ['wir', 'wissen'],
+    ['ihr', 'wisst'],
+    ['sie/Sie', 'wissen']
+  ]
+};
+
+const PRONOUN_TRANSLATIONS = {
+  ich: 'I',
+  du: 'you',
+  'er/sie/es': 'he / she / it',
+  wir: 'we',
+  ihr: 'you (plural)',
+  'sie/Sie': 'they / you (formal)'
+};
 
 const TRANSLATION_DIRECTIONS = [
   {
@@ -155,6 +200,26 @@ function createTranslationMap(translations) {
   return map;
 }
 
+function addWordIndexEntry(index, key, row) {
+  if (!key || index.has(key)) {
+    return;
+  }
+
+  index.set(key, row);
+}
+
+function createWordIndex(words) {
+  const index = new Map();
+
+  for (const row of words) {
+    const key = normalizeLookupTerm(row.word);
+    addWordIndexEntry(index, key, row);
+    addWordIndexEntry(index, foldGermanTerm(key), row);
+  }
+
+  return index;
+}
+
 function addNounIndexEntry(index, key, row) {
   if (!key) {
     return;
@@ -175,6 +240,43 @@ function createNounIndex(nouns) {
   }
 
   return index;
+}
+
+function getNounSuggestionIdentity(row) {
+  return `noun:${getResultIdentity(row)}`;
+}
+
+function getVerbSuggestionIdentity(row) {
+  return `verb:${normalizeLookupTerm(row.word)}`;
+}
+
+function parseWordList(words, fileName) {
+  if (!Array.isArray(words)) {
+    throw new Error(`${fileName} must be a JSON array of German verbs`);
+  }
+
+  const rowsByWord = new Map();
+
+  words.forEach((entry) => {
+    const row = typeof entry === 'string' ? { word: entry } : entry;
+    const word = String(row?.word || '').trim();
+
+    if (!/^[a-zäöüß]+$/.test(word)) {
+      return;
+    }
+
+    rowsByWord.set(word, {
+      type: 'verb',
+      word,
+      forms: row.forms && typeof row.forms === 'object' ? row.forms : null,
+      past: String(row.past || '').trim(),
+      participle: String(row.participle || '').trim(),
+      auxiliary: String(row.auxiliary || '').trim()
+    });
+  });
+
+  return [...rowsByWord.values()]
+    .sort((a, b) => a.word.localeCompare(b.word, 'de'));
 }
 
 function dedupeRows(rows) {
@@ -201,6 +303,22 @@ function dedupeRows(rows) {
 function getEnglishForNoun(data, row) {
   const normalized = normalizeLookupTerm(row.lemma);
   return data.translationMaps.germanEnglish.get(normalized) || data.translationMaps.germanEnglish.get(foldGermanTerm(normalized)) || '';
+}
+
+function getEnglishForWord(data, row) {
+  const normalized = normalizeLookupTerm(row.word);
+  return data.translationMaps.germanEnglish.get(normalized) || data.translationMaps.germanEnglish.get(foldGermanTerm(normalized)) || '';
+}
+
+function enrichWordWithEnglish(data, row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    english: getEnglishForWord(data, row)
+  };
 }
 
 function enrichRowsWithEnglish(data, rows) {
@@ -241,6 +359,44 @@ function articleClass(article) {
 
 function getDisplayNoun(row) {
   return row.lemma;
+}
+
+function getWordForms(row) {
+  const lowerWord = normalizeLookupTerm(row.word);
+  const sourceForms = row.forms;
+
+  if (sourceForms) {
+    return ['ich', 'du', 'er/sie/es', 'wir', 'ihr', 'sie/Sie']
+      .map((pronoun) => ({
+        pronoun,
+        form: String(sourceForms[pronoun] || '').trim()
+      }))
+      .filter(({ form }) => form);
+  }
+
+  const irregularForms = IRREGULAR_VERB_FORMS[lowerWord];
+
+  if (irregularForms) {
+    return irregularForms.map(([pronoun, form]) => ({ pronoun, form }));
+  }
+
+  if (!lowerWord.endsWith('en') && !lowerWord.endsWith('n')) {
+    return [];
+  }
+
+  const stem = lowerWord.endsWith('en') ? lowerWord.slice(0, -2) : lowerWord.slice(0, -1);
+  const needsE = /[td]$/.test(stem);
+  const duEnding = /(?:s|ß|x|z)$/.test(stem) ? 't' : `${needsE ? 'e' : ''}st`;
+  const tEnding = `${needsE ? 'e' : ''}t`;
+
+  return [
+    { pronoun: 'ich', form: `${stem}e` },
+    { pronoun: 'du', form: `${stem}${duEnding}` },
+    { pronoun: 'er/sie/es', form: `${stem}${tEnding}` },
+    { pronoun: 'wir', form: lowerWord },
+    { pronoun: 'ihr', form: `${stem}${tEnding}` },
+    { pronoun: 'sie/Sie', form: lowerWord }
+  ];
 }
 
 async function fetchWithProgress(url, onProgress, fileName = 'file') {
@@ -314,13 +470,18 @@ async function initAppData(onProgress = () => {}) {
   report(10, `Downloading ${NOUN_FILE_NAME}...`);
 
   const nounBuffer = await fetchWithProgress(assetUrl(NOUN_FILE_NAME), (ratio) => {
-    report(10 + Math.round(ratio * 55), `Downloading ${NOUN_FILE_NAME}...`);
+    report(10 + Math.round(ratio * 45), `Downloading ${NOUN_FILE_NAME}...`);
   }, NOUN_FILE_NAME);
   report(65, `Downloading ${TRANSLATION_FILE_NAME}...`);
 
   const germanEnglishMap = await loadTranslationMap('germanEnglish', (ratio) => {
-    report(65 + Math.round(ratio * 30), `Downloading ${TRANSLATION_FILE_NAME}...`);
+    report(55 + Math.round(ratio * 25), `Downloading ${TRANSLATION_FILE_NAME}...`);
   });
+  report(80, `Downloading ${WORD_FILE_NAME}...`);
+
+  const wordBuffer = await fetchWithProgress(assetUrl(WORD_FILE_NAME), (ratio) => {
+    report(80 + Math.round(ratio * 15), `Downloading ${WORD_FILE_NAME}...`);
+  }, WORD_FILE_NAME);
   report(95, 'Preparing local indexes...');
 
   const nouns = parseJsonBuffer(nounBuffer, NOUN_FILE_NAME)
@@ -329,29 +490,52 @@ async function initAppData(onProgress = () => {}) {
       genus: String(row.genus || '').trim()
     }))
     .filter((row) => row.lemma);
+  const words = parseWordList(parseJsonBuffer(wordBuffer, WORD_FILE_NAME), WORD_FILE_NAME);
 
   report(99, 'Finalizing local search...');
 
   return {
     nouns,
     nounIndex: createNounIndex(nouns),
+    words,
+    wordIndex: createWordIndex(words),
     translationMaps: {
       germanEnglish: germanEnglishMap
     }
   };
 }
 
-async function queryNouns(data, rawTerm) {
+async function querySearch(data, rawTerm, searchKind) {
   const term = normalizeInput(rawTerm);
   if (!term) {
-    return { exact: [], suggestions: [] };
+    return { exact: [], suggestions: [], word: null };
   }
 
   const lookupTerm = normalizeLookupTerm(term);
+
+  if (searchKind === 'verbs') {
+    const exactWord = data.wordIndex.get(lookupTerm) || data.wordIndex.get(foldGermanTerm(lookupTerm)) || null;
+    if (exactWord) {
+      return { exact: [], suggestions: [], word: enrichWordWithEnglish(data, exactWord) };
+    }
+
+    const foldedTerm = foldGermanTerm(lookupTerm);
+    const suggestions = data.words
+      .filter((row) => {
+        const word = normalizeLookupTerm(row.word);
+        return word.startsWith(lookupTerm) || foldGermanTerm(word).startsWith(foldedTerm);
+      })
+      .sort((a, b) => a.word.length - b.word.length || a.word.localeCompare(b.word, 'de'))
+      .slice(0, 12)
+      .map((row) => ({ type: 'verb', row }));
+
+    return { exact: [], suggestions, word: null };
+  }
+
   const exactRows = (data.nounIndex.get(lookupTerm) || data.nounIndex.get(foldGermanTerm(lookupTerm)) || []).slice(0, 25);
   const exact = enrichRowsWithEnglish(data, exactRows);
   if (exact.length) {
-    return { exact, suggestions: [] };
+    return { exact, suggestions: [], word: null };
   }
 
   const foldedTerm = foldGermanTerm(lookupTerm);
@@ -363,10 +547,10 @@ async function queryNouns(data, rawTerm) {
     .sort((a, b) => a.lemma.length - b.lemma.length || a.lemma.localeCompare(b.lemma, 'de'))
     .slice(0, 12);
   const suggestions = enrichRowsWithEnglish(data, suggestionRows);
-  return { exact: [], suggestions };
+  return { exact: [], suggestions, word: null };
 }
 
-async function queryTypeaheadSuggestions(data, rawTerm) {
+async function queryTypeaheadSuggestions(data, rawTerm, searchKind) {
   const term = normalizeInput(rawTerm);
   if (term.length <= 1) {
     return [];
@@ -375,7 +559,19 @@ async function queryTypeaheadSuggestions(data, rawTerm) {
   const lookupTerm = normalizeLookupTerm(term);
   const foldedTerm = foldGermanTerm(lookupTerm);
 
-  return data.nouns
+  if (searchKind === 'verbs') {
+    return data.words
+      .filter((row) => {
+        const word = normalizeLookupTerm(row.word);
+        return word.startsWith(lookupTerm) || foldGermanTerm(word).startsWith(foldedTerm);
+      })
+      .sort((a, b) => a.word.length - b.word.length || a.word.localeCompare(b.word, 'de'))
+      .filter((row, index, rows) => rows.findIndex((item) => normalizeLookupTerm(item.word) === normalizeLookupTerm(row.word)) === index)
+      .slice(0, 10)
+      .map((row) => ({ type: 'verb', row }));
+  }
+
+  const nounSuggestions = data.nouns
     .filter((row) => {
       const lemma = normalizeLookupTerm(row.lemma);
       return lemma.startsWith(lookupTerm) || foldGermanTerm(lemma).startsWith(foldedTerm);
@@ -384,7 +580,10 @@ async function queryTypeaheadSuggestions(data, rawTerm) {
     .slice(0, 25)
     .filter(hasKnownArticle)
     .filter((row, index, rows) => rows.findIndex((item) => getResultIdentity(item) === getResultIdentity(row)) === index)
-    .slice(0, 10);
+    .slice(0, 8)
+    .map((row) => ({ type: 'noun', row }));
+
+  return nounSuggestions;
 }
 
 async function queryTranslation(data, directionId, rawTerm) {
@@ -437,27 +636,46 @@ function ResultCard({ row, subtle = false }) {
         </p>
         {row.lemma !== displayNoun && <p className="lemma">Lemma: {row.lemma}</p>}
         {row.english && <p className="translation">English: {row.english}</p>}
-        <details className="determiner-dropdown">
-          <summary>
-            <span>Ein, kein, mein...</span>
-            <ChevronDown size={18} aria-hidden="true" />
-          </summary>
-          <div className="determiner-list">
-            {articles.map((article) => (
-              <div className="determiner-group" key={`${row.lemma}-${article}-determiners`}>
-                <span className={articleClass(article)}>{article}</span>
-                <div className="determiner-chips">
-                  {DETERMINER_FORMS.map((item) => (
-                    <span className="determiner-chip" key={`${article}-${item.base}`}>
-                      {item.forms[article]}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </details>
+        {articles.map((article) => (
+          <table className="determiner-table" aria-label={`${article} determiner forms for ${displayNoun}`} key={`${row.lemma}-${article}-determiners`}>
+            <thead>
+              <tr>
+                <th scope="col">German</th>
+                <th scope="col">English</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DETERMINER_FORMS.map((item) => (
+                <tr key={`${article}-${item.base}`}>
+                  <td>{item.forms[article]}</td>
+                  <td>{item.english}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
       </div>
+    </article>
+  );
+}
+
+function WordCard({ row }) {
+  const forms = getWordForms(row);
+
+  return (
+    <article className="result-card word-card">
+      <table className="conjugation-table" aria-label={`Conjugation table for ${row.word}`}>
+        <tbody>
+          {forms.map(({ pronoun, form }) => (
+            <tr key={`${row.word}-${pronoun}`}>
+              <th data-tooltip={PRONOUN_TRANSLATIONS[pronoun]} scope="row" tabIndex="0">
+                {pronoun}
+              </th>
+              <td>{form}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </article>
   );
 }
@@ -467,12 +685,13 @@ function App() {
   const [readyState, setReadyState] = useState('loading');
   const [status, setStatus] = useState('Loading local JSON data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [searchKind, setSearchKind] = useState('nouns');
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [typeaheadSuggestions, setTypeaheadSuggestions] = useState([]);
   const [suppressedSuggestionTerm, setSuppressedSuggestionTerm] = useState('');
-  const [result, setResult] = useState({ exact: [], suggestions: [] });
+  const [result, setResult] = useState({ exact: [], suggestions: [], word: null });
   const [lastQuery, setLastQuery] = useState('');
   const [translationTerm, setTranslationTerm] = useState('');
   const [translationDirection, setTranslationDirection] = useState(TRANSLATION_DIRECTIONS[0].id);
@@ -535,7 +754,7 @@ function App() {
 
     const timeoutId = window.setTimeout(async () => {
       try {
-        const nextSuggestions = await queryTypeaheadSuggestions(dataRef.current, normalized);
+        const nextSuggestions = await queryTypeaheadSuggestions(dataRef.current, normalized, searchKind);
         if (isActive && suggestionRequestRef.current === requestId) {
           setTypeaheadSuggestions(nextSuggestions);
         }
@@ -554,7 +773,7 @@ function App() {
       isActive = false;
       window.clearTimeout(timeoutId);
     };
-  }, [activeTab, readyState, searchTerm, suppressedSuggestionTerm]);
+  }, [activeTab, readyState, searchKind, searchTerm, suppressedSuggestionTerm]);
 
   const helperText = useMemo(() => {
     if (readyState === 'loading') {
@@ -569,8 +788,10 @@ function App() {
       return 'Translate individual words between German, English, and Russian using the local JSON dictionaries.';
     }
 
-    return 'Search exact German nouns such as Haus, Katze, Baum, or Mädchen to see the article and English translation when available.';
-  }, [activeTab, readyState]);
+    return searchKind === 'nouns'
+      ? 'Search German nouns to see the article, English translation, and determiner forms.'
+      : 'Search German verbs to see the conjugation table.';
+  }, [activeTab, readyState, searchKind]);
 
   const selectedTranslationDirection = useMemo(
     () => TRANSLATION_DIRECTIONS.find((direction) => direction.id === translationDirection) || TRANSLATION_DIRECTIONS[0],
@@ -585,7 +806,7 @@ function App() {
 
     const normalized = normalizeInput(searchTerm);
     if (!normalized) {
-      setResult({ exact: [], suggestions: [] });
+      setResult({ exact: [], suggestions: [], word: null });
       setLastQuery('');
       setTypeaheadSuggestions([]);
       return;
@@ -597,18 +818,18 @@ function App() {
     setTypeaheadSuggestions([]);
 
     try {
-      const nextResult = await queryNouns(dataRef.current, normalized);
+      const nextResult = await querySearch(dataRef.current, normalized, searchKind);
       setResult(nextResult);
       setStatus('Ready');
     } catch (error) {
-      setResult({ exact: [], suggestions: [] });
+      setResult({ exact: [], suggestions: [], word: null });
       setStatus(error?.message || String(error));
     } finally {
       setIsSearching(false);
     }
   }
 
-  async function handleSuggestionClick(row) {
+  async function handleNounSuggestionClick(row) {
     const displayNoun = getDisplayNoun(row);
     setSearchTerm(displayNoun);
     setSuppressedSuggestionTerm(normalizeLookupTerm(displayNoun));
@@ -618,15 +839,25 @@ function App() {
     setStatus('Searching local JSON...');
 
     try {
-      const nextResult = await queryNouns(dataRef.current, displayNoun);
-      setResult(nextResult.exact.length ? nextResult : { exact: [row], suggestions: [] });
+      const nextResult = await querySearch(dataRef.current, displayNoun, 'nouns');
+      setResult(nextResult.exact.length ? nextResult : { exact: [row], suggestions: [], word: null });
       setStatus('Ready');
     } catch (error) {
-      setResult({ exact: [row], suggestions: [] });
+      setResult({ exact: [row], suggestions: [], word: null });
       setStatus(error?.message || String(error));
     } finally {
       setIsSearching(false);
     }
+  }
+
+  function handleWordSuggestionClick(row) {
+    const word = row.word;
+    setSearchTerm(word);
+    setSuppressedSuggestionTerm(normalizeLookupTerm(word));
+    setTypeaheadSuggestions([]);
+    setLastQuery(word);
+    setResult({ exact: [], suggestions: [], word: enrichWordWithEnglish(dataRef.current, row) });
+    setStatus('Ready');
   }
 
   async function handleTranslationSubmit(event) {
@@ -671,12 +902,22 @@ function App() {
 
   const knownResult = useMemo(
     () => ({
-      exact: dedupeRows(result.exact.filter(hasKnownArticle)),
-      suggestions: dedupeRows(result.suggestions.filter(hasKnownArticle))
+      exact: dedupeRows((result.exact || []).filter(hasKnownArticle)),
+      suggestions: dedupeRows((result.suggestions || []).filter(hasKnownArticle))
     }),
     [result]
   );
-  const showEmpty = lastQuery && !knownResult.exact.length && !knownResult.suggestions.length && !isSearching;
+  const verbSuggestions = useMemo(
+    () => (result.suggestions || []).filter((item) => item?.type === 'verb').map((item) => item.row),
+    [result]
+  );
+  const showEmpty =
+    lastQuery &&
+    !knownResult.exact.length &&
+    !knownResult.suggestions.length &&
+    !verbSuggestions.length &&
+    !result.word &&
+    !isSearching;
   const showTypeahead = searchTerm.trim().length > 1 && (isSuggesting || typeaheadSuggestions.length > 0);
   const showTranslationEmpty =
     lastTranslationQuery && !translationResult.exact && !translationResult.suggestions.length && !isTranslating;
@@ -720,7 +961,38 @@ function App() {
 
         {activeTab === 'articles' && (
           <form className="search-form" onSubmit={handleSubmit}>
-            <label htmlFor="noun-search">German noun</label>
+            <div className="search-kind-toggle" role="tablist" aria-label="German search type">
+              <button
+                aria-selected={searchKind === 'nouns'}
+                onClick={() => {
+                  setSearchKind('nouns');
+                  setResult({ exact: [], suggestions: [], word: null });
+                  setLastQuery('');
+                  setTypeaheadSuggestions([]);
+                  setSuppressedSuggestionTerm('');
+                }}
+                role="tab"
+                type="button"
+              >
+                Nouns
+              </button>
+              <button
+                aria-selected={searchKind === 'verbs'}
+                onClick={() => {
+                  setSearchKind('verbs');
+                  setResult({ exact: [], suggestions: [], word: null });
+                  setLastQuery('');
+                  setTypeaheadSuggestions([]);
+                  setSuppressedSuggestionTerm('');
+                }}
+                role="tab"
+                type="button"
+              >
+                Verbs
+              </button>
+            </div>
+
+            <label htmlFor="noun-search">{searchKind === 'nouns' ? 'German noun' : 'German verb'}</label>
             <div className="search-box">
               <Search size={22} aria-hidden="true" />
               <input
@@ -731,7 +1003,7 @@ function App() {
                   setSearchTerm(event.target.value);
                   setSuppressedSuggestionTerm('');
                 }}
-                placeholder="Type a noun..."
+                placeholder={searchKind === 'nouns' ? 'Type a noun...' : 'Type a verb...'}
                 autoComplete="off"
                 aria-autocomplete="list"
                 aria-controls="noun-suggestions"
@@ -745,7 +1017,7 @@ function App() {
             </div>
 
             {showTypeahead && (
-              <div className="suggestions" id="noun-suggestions" role="listbox" aria-label="Noun suggestions">
+              <div className="suggestions" id="noun-suggestions" role="listbox" aria-label={`${searchKind === 'nouns' ? 'Noun' : 'Verb'} suggestions`}>
                 {isSuggesting && (
                   <div className="suggestion-state">
                     <Loader2 className="spin" size={16} />
@@ -754,21 +1026,23 @@ function App() {
                 )}
 
                 {!isSuggesting &&
-                  typeaheadSuggestions.map((row, index) => {
-                    const displayNoun = getDisplayNoun(row);
+                  typeaheadSuggestions.map((suggestion, index) => {
+                    const isNoun = suggestion.type === 'noun';
+                    const row = suggestion.row;
+                    const label = isNoun ? getDisplayNoun(row) : row.word;
 
                     return (
                       <button
                         className="suggestion-item"
-                        key={`${row.lemma}-${displayNoun}-${index}`}
-                        onClick={() => handleSuggestionClick(row)}
+                        key={`${isNoun ? getNounSuggestionIdentity(row) : getVerbSuggestionIdentity(row)}-${index}`}
+                        onClick={() => (isNoun ? handleNounSuggestionClick(row) : handleWordSuggestionClick(row))}
                         role="option"
                         type="button"
                       >
                         <span className="suggestion-name">
-                          <span>{displayNoun}</span>
+                          <span>{label}</span>
                         </span>
-                        {row.lemma !== displayNoun && <span className="suggestion-lemma">{row.lemma}</span>}
+                        <span className="suggestion-lemma">{isNoun ? 'noun' : 'verb'}</span>
                       </button>
                     );
                   })}
@@ -830,14 +1104,14 @@ function App() {
       <section className="results-panel" aria-live="polite">
         {activeTab === 'articles' && !lastQuery && (
           <div className="empty-state">
-            <p>Enter a noun to see which article the local data returns.</p>
+            <p>{searchKind === 'nouns' ? 'Enter a noun to see its article and forms.' : 'Enter a verb to see its conjugation table.'}</p>
           </div>
         )}
 
         {activeTab === 'articles' && isSearching && (
           <div className="empty-state">
             <Loader2 className="spin" size={30} />
-            <p>Searching nouns.json...</p>
+            <p>Searching {searchKind === 'nouns' ? 'german_nouns.json' : 'german_words.json'}...</p>
           </div>
         )}
 
@@ -869,10 +1143,36 @@ function App() {
           </>
         )}
 
+        {activeTab === 'articles' && result.word && !isSearching && (
+          <>
+            <div className="section-heading">
+              <p>Verb forms</p>
+              <span>External verb list</span>
+            </div>
+            <WordCard row={result.word} />
+          </>
+        )}
+
+        {activeTab === 'articles' && !!verbSuggestions.length && !isSearching && (
+          <>
+            <div className="section-heading">
+              <p>No exact match for “{lastQuery}”</p>
+              <span>Similar verbs</span>
+            </div>
+            <div className="result-grid">
+              {verbSuggestions.map((row) => (
+                <button className="result-card verb-result-button" key={getVerbSuggestionIdentity(row)} onClick={() => handleWordSuggestionClick(row)} type="button">
+                  {row.word}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
         {activeTab === 'articles' && showEmpty && (
           <div className="empty-state">
             <AlertCircle size={30} />
-            <p>No noun found for “{lastQuery}”.</p>
+            <p>No {searchKind === 'nouns' ? 'noun' : 'verb'} found for “{lastQuery}”.</p>
           </div>
         )}
 

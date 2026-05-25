@@ -167,6 +167,32 @@ h1 {
   box-shadow: 0 8px 18px rgba(0, 140, 114, 0.2);
 }
 
+.search-kind-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.search-kind-toggle button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.search-kind-toggle button[aria-selected="true"] {
+  color: #fff;
+  background: var(--teal);
+  box-shadow: 0 8px 18px rgba(0, 140, 114, 0.2);
+}
+
 .search-form {
   display: grid;
   gap: 8px;
@@ -408,78 +434,124 @@ h1 {
   line-height: 1.4;
 }
 
-.determiner-dropdown {
+.conjugation-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.conjugation-table th,
+.conjugation-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #dbe5da;
+  text-align: left;
+}
+
+.conjugation-table tr:last-child th,
+.conjugation-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.conjugation-table th {
+  position: relative;
+  width: 34%;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 850;
+  cursor: help;
+}
+
+.conjugation-table th[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  bottom: calc(100% - 2px);
+  width: max-content;
+  max-width: 180px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: #fff;
+  background: #3f4644;
+  box-shadow: 0 8px 18px rgba(23, 32, 31, 0.16);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.conjugation-table th[data-tooltip]:hover::after,
+.conjugation-table th[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.conjugation-table td {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.determiner-table {
+  width: 100%;
   margin-top: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
   border: 1px solid #d7e3d6;
   border-radius: 8px;
   background: #fbfdf8;
+  overflow: hidden;
 }
 
-.determiner-dropdown summary {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 42px;
-  padding: 0 12px;
-  color: #34403d;
-  cursor: pointer;
-  font-size: 0.9rem;
+.determiner-table th,
+.determiner-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #dbe5da;
+  text-align: left;
+}
+
+.determiner-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.determiner-table th {
+  color: var(--muted);
+  font-size: 0.82rem;
   font-weight: 850;
-  list-style: none;
-}
-
-.determiner-dropdown summary::-webkit-details-marker {
-  display: none;
-}
-
-.determiner-dropdown summary svg {
-  flex: none;
-  color: var(--teal);
-  transition: transform 0.16s ease;
-}
-
-.determiner-dropdown[open] summary {
-  border-bottom: 1px solid #d7e3d6;
-}
-
-.determiner-dropdown[open] summary svg {
-  transform: rotate(180deg);
-}
-
-.determiner-list {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-}
-
-.determiner-group {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-}
-
-.determiner-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  min-width: 0;
-}
-
-.determiner-chip {
-  display: inline-grid;
-  place-items: center;
-  min-height: 28px;
-  padding: 4px 9px;
-  border: 1px solid #dbe5da;
-  border-radius: 6px;
   background: #ffffff;
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 800;
-  line-height: 1.15;
+}
+
+.determiner-table th:first-child,
+.determiner-table td:first-child {
+  width: 42%;
+}
+
+.determiner-table td {
   overflow-wrap: anywhere;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.verb-result-button {
+  width: 100%;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font-size: 1.15rem;
+  font-weight: 850;
+}
+
+.verb-result-button:hover,
+.verb-result-button:focus-visible {
+  outline: 0;
+  border-color: rgba(0, 140, 114, 0.38);
+  box-shadow: 0 11px 26px rgba(23, 32, 31, 0.09);
+  transform: translateY(-1px);
 }
 
 .translation-card {
