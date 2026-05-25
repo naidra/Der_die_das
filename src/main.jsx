@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, ChevronDown, Languages, Loader2, Search, Sparkles } from 'lucide-react';
 import './styles.css';
 
 const NOUN_FILE_NAME = 'nouns.json';
@@ -14,6 +14,18 @@ const ARTICLE_BY_GENUS = {
   f: 'die',
   n: 'das'
 };
+
+const DETERMINER_FORMS = [
+  { base: 'ein', forms: { der: 'ein', die: 'eine', das: 'ein' } },
+  { base: 'kein', forms: { der: 'kein', die: 'keine', das: 'kein' } },
+  { base: 'mein', forms: { der: 'mein', die: 'meine', das: 'mein' } },
+  { base: 'dein', forms: { der: 'dein', die: 'deine', das: 'dein' } },
+  { base: 'sein', forms: { der: 'sein', die: 'seine', das: 'sein' } },
+  { base: 'ihr', forms: { der: 'ihr', die: 'ihre', das: 'ihr' } },
+  { base: 'unser', forms: { der: 'unser', die: 'unsere', das: 'unser' } },
+  { base: 'euer', forms: { der: 'euer', die: 'eure', das: 'euer' } },
+  { base: 'Ihr', forms: { der: 'Ihr', die: 'Ihre', das: 'Ihr' } }
+];
 
 const TRANSLATION_DIRECTIONS = [
   {
@@ -83,7 +95,7 @@ function normalizeInput(value) {
 
 function normalizeLookupTerm(value) {
   return normalizeInput(String(value || ''))
-    .toLowerCase()
+    .toLocaleLowerCase()
     .replace(/[.,!?;:"'()[\]{}]/g, '')
     .replace(/\s+/g, ' ');
 }
@@ -425,6 +437,26 @@ function ResultCard({ row, subtle = false }) {
         </p>
         {row.lemma !== displayNoun && <p className="lemma">Lemma: {row.lemma}</p>}
         {row.english && <p className="translation">English: {row.english}</p>}
+        <details className="determiner-dropdown">
+          <summary>
+            <span>Ein, kein, mein...</span>
+            <ChevronDown size={18} aria-hidden="true" />
+          </summary>
+          <div className="determiner-list">
+            {articles.map((article) => (
+              <div className="determiner-group" key={`${row.lemma}-${article}-determiners`}>
+                <span className={articleClass(article)}>{article}</span>
+                <div className="determiner-chips">
+                  {DETERMINER_FORMS.map((item) => (
+                    <span className="determiner-chip" key={`${article}-${item.base}`}>
+                      {item.forms[article]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
       </div>
     </article>
   );
@@ -490,7 +522,7 @@ function App() {
       activeTab !== 'articles' ||
       !dataRef.current ||
       normalized.length <= 1 ||
-      normalized === suppressedSuggestionTerm
+      normalizeLookupTerm(normalized) === suppressedSuggestionTerm
     ) {
       setTypeaheadSuggestions([]);
       setIsSuggesting(false);
@@ -579,7 +611,7 @@ function App() {
   async function handleSuggestionClick(row) {
     const displayNoun = getDisplayNoun(row);
     setSearchTerm(displayNoun);
-    setSuppressedSuggestionTerm(normalizeInput(displayNoun));
+    setSuppressedSuggestionTerm(normalizeLookupTerm(displayNoun));
     setTypeaheadSuggestions([]);
     setLastQuery(displayNoun);
     setIsSearching(true);

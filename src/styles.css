@@ -408,6 +408,80 @@ h1 {
   line-height: 1.4;
 }
 
+.determiner-dropdown {
+  margin-top: 12px;
+  border: 1px solid #d7e3d6;
+  border-radius: 8px;
+  background: #fbfdf8;
+}
+
+.determiner-dropdown summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 12px;
+  color: #34403d;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.determiner-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.determiner-dropdown summary svg {
+  flex: none;
+  color: var(--teal);
+  transition: transform 0.16s ease;
+}
+
+.determiner-dropdown[open] summary {
+  border-bottom: 1px solid #d7e3d6;
+}
+
+.determiner-dropdown[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.determiner-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.determiner-group {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.determiner-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.determiner-chip {
+  display: inline-grid;
+  place-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid #dbe5da;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
 .translation-card {
   display: grid;
   gap: 8px;
@@ -546,5 +620,9 @@ h1 {
 
   .noun {
     font-size: 1.35rem;
+  }
+
+  .determiner-group {
+    grid-template-columns: 1fr;
   }
 }
