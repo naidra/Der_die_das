@@ -394,20 +394,10 @@ h1 {
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 7px 20px rgba(23, 32, 31, 0.05);
-  transition:
-    border-color 0.16s ease,
-    transform 0.16s ease,
-    box-shadow 0.16s ease;
 }
 
 .result-card.subtle {
   background: #fbfcf7;
-}
-
-.result-card:hover {
-  border-color: rgba(0, 140, 114, 0.38);
-  box-shadow: 0 11px 26px rgba(23, 32, 31, 0.09);
-  transform: translateY(-1px);
 }
 
 .noun {
@@ -432,6 +422,36 @@ h1 {
   overflow-wrap: anywhere;
   font-size: 0.95rem;
   line-height: 1.4;
+}
+
+.verb-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.7rem;
+  line-height: 1.1;
+}
+
+.tense-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.tense-section {
+  overflow: hidden;
+  border: 1px solid #d7e3d6;
+  border-radius: 8px;
+  background: #fbfdf8;
+}
+
+.tense-section h3 {
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid #dbe5da;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 0.92rem;
+  font-weight: 900;
 }
 
 .conjugation-table {
@@ -550,8 +570,6 @@ h1 {
 .verb-result-button:focus-visible {
   outline: 0;
   border-color: rgba(0, 140, 114, 0.38);
-  box-shadow: 0 11px 26px rgba(23, 32, 31, 0.09);
-  transform: translateY(-1px);
 }
 
 .translation-card {

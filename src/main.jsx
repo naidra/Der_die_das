@@ -4,7 +4,7 @@ import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } fr
 import './styles.css';
 
 const NOUN_FILE_NAME = 'german_nouns.json';
-const WORD_FILE_NAME = 'german_words.json';
+const WORD_FILE_NAME = 'german_verbs.json';
 const TRANSLATION_FILE_NAME = 'german_english.json';
 const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
 const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
@@ -208,13 +208,26 @@ function addWordIndexEntry(index, key, row) {
   index.set(key, row);
 }
 
+function getWordIndexTerms(row) {
+  const terms = new Set([row.word]);
+
+  Object.values(row.forms || {}).forEach((form) => terms.add(form));
+  (row.tenses || []).forEach((tense) => {
+    (tense.forms || []).forEach(({ form }) => terms.add(form));
+  });
+
+  return [...terms].filter(Boolean);
+}
+
 function createWordIndex(words) {
   const index = new Map();
 
   for (const row of words) {
-    const key = normalizeLookupTerm(row.word);
-    addWordIndexEntry(index, key, row);
-    addWordIndexEntry(index, foldGermanTerm(key), row);
+    for (const term of getWordIndexTerms(row)) {
+      const key = normalizeLookupTerm(term);
+      addWordIndexEntry(index, key, row);
+      addWordIndexEntry(index, foldGermanTerm(key), row);
+    }
   }
 
   return index;
@@ -271,7 +284,22 @@ function parseWordList(words, fileName) {
       forms: row.forms && typeof row.forms === 'object' ? row.forms : null,
       past: String(row.past || '').trim(),
       participle: String(row.participle || '').trim(),
-      auxiliary: String(row.auxiliary || '').trim()
+      auxiliary: String(row.auxiliary || '').trim(),
+      tenses: Array.isArray(row.tenses)
+        ? row.tenses
+            .map((tense) => ({
+              label: String(tense?.label || '').trim(),
+              forms: Array.isArray(tense?.forms)
+                ? tense.forms
+                    .map((form) => ({
+                      pronoun: String(form?.pronoun || '').trim(),
+                      form: String(form?.form || '').trim()
+                    }))
+                    .filter(({ pronoun, form }) => pronoun && form)
+                : []
+            }))
+            .filter((tense) => tense.label && tense.forms.length)
+        : []
     });
   });
 
@@ -397,6 +425,35 @@ function getWordForms(row) {
     { pronoun: 'ihr', form: `${stem}${tEnding}` },
     { pronoun: 'sie/Sie', form: lowerWord }
   ];
+}
+
+function getWordTenses(row) {
+  if (row.tenses?.length) {
+    return row.tenses;
+  }
+
+  const presentForms = getWordForms(row);
+  const tenses = [];
+
+  if (presentForms.length) {
+    tenses.push({ label: 'Präsens', forms: presentForms });
+  }
+
+  if (row.past) {
+    tenses.push({ label: 'Präteritum', forms: [{ pronoun: 'ich', form: row.past }] });
+  }
+
+  if (row.participle || row.auxiliary) {
+    tenses.push({
+      label: 'Perfekt',
+      forms: [
+        { pronoun: 'Hilfsverb', form: row.auxiliary },
+        { pronoun: 'Partizip II', form: row.participle }
+      ].filter(({ form }) => form)
+    });
+  }
+
+  return tenses;
 }
 
 async function fetchWithProgress(url, onProgress, fileName = 'file') {
@@ -660,22 +717,31 @@ function ResultCard({ row, subtle = false }) {
 }
 
 function WordCard({ row }) {
-  const forms = getWordForms(row);
+  const tenses = getWordTenses(row);
 
   return (
     <article className="result-card word-card">
-      <table className="conjugation-table" aria-label={`Conjugation table for ${row.word}`}>
-        <tbody>
-          {forms.map(({ pronoun, form }) => (
-            <tr key={`${row.word}-${pronoun}`}>
-              <th data-tooltip={PRONOUN_TRANSLATIONS[pronoun]} scope="row" tabIndex="0">
-                {pronoun}
-              </th>
-              <td>{form}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h2 className="verb-title">{row.word}</h2>
+      {row.english && <p className="translation">English: {row.english}</p>}
+      <div className="tense-list">
+        {tenses.map((tense) => (
+          <section className="tense-section" aria-label={`${tense.label} forms for ${row.word}`} key={`${row.word}-${tense.label}`}>
+            <h3>{tense.label}</h3>
+            <table className="conjugation-table">
+              <tbody>
+                {tense.forms.map(({ pronoun, form }) => (
+                  <tr key={`${row.word}-${tense.label}-${pronoun}`}>
+                    <th data-tooltip={PRONOUN_TRANSLATIONS[pronoun]} scope="row" tabIndex={PRONOUN_TRANSLATIONS[pronoun] ? '0' : undefined}>
+                      {pronoun}
+                    </th>
+                    <td>{form}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ))}
+      </div>
     </article>
   );
 }
@@ -1147,7 +1213,7 @@ function App() {
           <>
             <div className="section-heading">
               <p>Verb forms</p>
-              <span>External verb list</span>
+              <span>CSV verb database</span>
             </div>
             <WordCard row={result.word} />
           </>
