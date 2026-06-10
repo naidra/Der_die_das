@@ -445,6 +445,10 @@ h1 {
 }
 
 .tense-section h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
   margin: 0;
   padding: 9px 12px;
   border-bottom: 1px solid #dbe5da;
@@ -452,6 +456,13 @@ h1 {
   background: #ffffff;
   font-size: 0.92rem;
   font-weight: 900;
+}
+
+.tense-description {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.25;
 }
 
 .conjugation-table {

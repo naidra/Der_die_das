@@ -72,6 +72,14 @@ const PRONOUN_TRANSLATIONS = {
   'sie/Sie': 'they / you (formal)'
 };
 
+const TENSE_DESCRIPTIONS = {
+  Präsens: 'present / now',
+  Präteritum: 'simple past',
+  Perfekt: 'spoken past / have done',
+  'Konjunktiv II': 'would / hypothetical',
+  Imperativ: 'command form'
+};
+
 const TRANSLATION_DIRECTIONS = [
   {
     id: 'german-english',
@@ -726,7 +734,10 @@ function WordCard({ row }) {
       <div className="tense-list">
         {tenses.map((tense) => (
           <section className="tense-section" aria-label={`${tense.label} forms for ${row.word}`} key={`${row.word}-${tense.label}`}>
-            <h3>{tense.label}</h3>
+            <h3>
+              <span>{tense.label}</span>
+              {TENSE_DESCRIPTIONS[tense.label] && <span className="tense-description">{TENSE_DESCRIPTIONS[tense.label]}</span>}
+            </h3>
             <table className="conjugation-table">
               <tbody>
                 {tense.forms.map(({ pronoun, form }) => (
