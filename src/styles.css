@@ -688,7 +688,13 @@ h1 {
   text-transform: uppercase;
 }
 
-.random-sentence-heading button {
+.random-sentence-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.random-sentence-actions button {
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -702,13 +708,13 @@ h1 {
   cursor: pointer;
 }
 
-.random-sentence-heading button:hover:not(:disabled),
-.random-sentence-heading button:focus-visible {
+.random-sentence-actions button:hover:not(:disabled),
+.random-sentence-actions button:focus-visible {
   border-color: var(--teal);
   outline: 0;
 }
 
-.random-sentence-heading button:disabled {
+.random-sentence-actions button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
@@ -718,20 +724,61 @@ h1 {
   gap: 10px;
 }
 
-.random-sentence-copy p {
+.random-sentence-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.random-sentence-line p {
+  min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.5;
 }
 
-.random-sentence-copy p[lang="en"] {
+.random-sentence-line[lang="en"] p {
   font-size: 1.08rem;
   font-weight: 800;
 }
 
-.random-sentence-copy p[lang="de"] {
+.random-sentence-line[lang="de"] {
   padding-top: 10px;
   border-top: 1px solid var(--line);
+}
+
+.random-sentence-line[lang="de"] p {
   color: var(--muted);
+}
+
+.random-sentence-line button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 104px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--teal);
+  background: var(--surface-soft);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.random-sentence-line button:hover:not(:disabled),
+.random-sentence-line button:focus-visible {
+  border-color: var(--teal);
+  outline: 0;
+}
+
+.random-sentence-line button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .random-sentence-status,

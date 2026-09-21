@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, BookOpen, Check, Languages, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js/Client';
+import { AlertCircle, BookOpen, Check, Languages, Loader2, RefreshCw, Search, Sparkles, Volume2 } from 'lucide-react';
 import './styles.css';
 
 const NOUN_FILE_NAME = 'german_nouns.json';
@@ -11,6 +12,26 @@ const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
 const RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME = 'russian_english.json';
 const SENTENCE_FILE_NAME = 'en_de_translated_sentences.json';
 const SENTENCE_CHUNK_SIZE = 64 * 1024;
+const ELEVENLABS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
+const ELEVENLABS_MODEL_ID = 'eleven_multilingual_v2';
+const ELEVENLABS_OUTPUT_FORMAT = 'mp3_44100_128';
+const ELEVENLABS_ENCRYPTED_API_KEY = '125c39565a0e550300515b53070256545205530e070355025a02520356000903075204090352575f595256515a075655015355';
+const ELEVENLABS_DECRYPTION_KEY = 'a7f3c91e4b82d6fa1058c3e7b';
+
+function decryptApiKey(ciphertext, key) {
+  if (!ciphertext || !key || ciphertext.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(ciphertext)) {
+    return '';
+  }
+
+  const encryptedBytes = ciphertext.match(/.{2}/g).map((byte) => Number.parseInt(byte, 16));
+  const decrypted = encryptedBytes
+    .map((byte, index) => String.fromCharCode(byte ^ key.charCodeAt(index % key.length)))
+    .join('');
+
+  return /^[\x20-\x7E]+$/.test(decrypted) ? decrypted : '';
+}
+
+const ELEVENLABS_API_KEY = decryptApiKey(ELEVENLABS_ENCRYPTED_API_KEY, ELEVENLABS_DECRYPTION_KEY);
 
 let sentenceFileSizePromise;
 
@@ -240,6 +261,24 @@ function foldGermanTerm(value) {
 
 function normalizeArticlesKey(articles) {
   return [...articles].sort().join('|');
+}
+
+async function toAudioBlob(audio) {
+  return audio instanceof Blob ? audio : new Response(audio).blob();
+}
+
+async function playAudioBlob(blob) {
+  const audioUrl = URL.createObjectURL(blob);
+  const player = new Audio(audioUrl);
+  const revokeAudioUrl = () => URL.revokeObjectURL(audioUrl);
+
+  try {
+    player.addEventListener('ended', revokeAudioUrl, { once: true });
+    await player.play();
+  } catch (error) {
+    revokeAudioUrl();
+    throw error;
+  }
 }
 
 function getResultIdentity(row) {
@@ -855,12 +894,17 @@ function App() {
   const [randomSentence, setRandomSentence] = useState(null);
   const [isLoadingSentence, setIsLoadingSentence] = useState(true);
   const [sentenceError, setSentenceError] = useState('');
+  const [speakingLanguage, setSpeakingLanguage] = useState('');
+  const [sentenceAudioStatus, setSentenceAudioStatus] = useState('');
   const dataRef = useRef(null);
   const suggestionRequestRef = useRef(0);
+  const sentenceAudioCacheRef = useRef({ en: null, de: null });
+  const sentenceAudioRequestRef = useRef(false);
 
   async function showAnotherSentence(signal) {
     setIsLoadingSentence(true);
     setSentenceError('');
+    setSentenceAudioStatus('');
 
     try {
       const sentence = await loadRandomSentence(randomSentence, signal);
@@ -873,6 +917,50 @@ function App() {
       if (!signal?.aborted) {
         setIsLoadingSentence(false);
       }
+    }
+  }
+
+  async function speakRandomSentence(language) {
+    const text = String(randomSentence?.[language] || '').trim();
+    if (!text || sentenceAudioRequestRef.current) {
+      return;
+    }
+
+    const languageName = language === 'en' ? 'English' : 'German';
+    sentenceAudioRequestRef.current = true;
+    setSpeakingLanguage(language);
+
+    try {
+      let audioBlob = sentenceAudioCacheRef.current[language]?.text === text
+        ? sentenceAudioCacheRef.current[language].blob
+        : null;
+
+      if (!audioBlob) {
+        if (!ELEVENLABS_API_KEY) {
+          throw new Error('The ElevenLabs API key could not be decrypted.');
+        }
+
+        setSentenceAudioStatus(`Creating ${languageName.toLowerCase()} audio...`);
+        const elevenlabs = new ElevenLabsClient({
+          apiKey: ELEVENLABS_API_KEY
+        });
+        const audio = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
+          text,
+          modelId: ELEVENLABS_MODEL_ID,
+          outputFormat: ELEVENLABS_OUTPUT_FORMAT
+        });
+        audioBlob = await toAudioBlob(audio);
+        sentenceAudioCacheRef.current[language] = { text, blob: audioBlob };
+      }
+
+      setSentenceAudioStatus(`Playing ${languageName.toLowerCase()} audio...`);
+      await playAudioBlob(audioBlob);
+      setSentenceAudioStatus('');
+    } catch (error) {
+      setSentenceAudioStatus(error?.message || 'Could not create audio.');
+    } finally {
+      sentenceAudioRequestRef.current = false;
+      setSpeakingLanguage('');
     }
   }
 
@@ -1289,23 +1377,50 @@ function App() {
             <div className="random-sentence" aria-busy={isLoadingSentence}>
               <div className="random-sentence-heading">
                 <span>Translation practice</span>
-                <button
-                  aria-label="Show another random translation"
-                  disabled={isLoadingSentence}
-                  onClick={() => showAnotherSentence()}
-                  title="Show another translation"
-                  type="button"
-                >
-                  <RefreshCw className={isLoadingSentence ? 'spin' : undefined} size={18} />
-                </button>
+                <div className="random-sentence-actions">
+                  <button
+                    aria-label="Show another random translation"
+                    disabled={isLoadingSentence}
+                    onClick={() => showAnotherSentence()}
+                    title="Show another translation"
+                    type="button"
+                  >
+                    <RefreshCw className={isLoadingSentence ? 'spin' : undefined} size={18} />
+                  </button>
+                </div>
               </div>
               {randomSentence && (
                 <div className="random-sentence-copy">
-                  <p lang="en">{randomSentence.en}</p>
-                  <p lang="de">{randomSentence.de}</p>
+                  <div className="random-sentence-line" lang="en">
+                    <p>{randomSentence.en}</p>
+                    <button
+                      aria-label="Play English text as audio"
+                      disabled={Boolean(speakingLanguage)}
+                      onClick={() => speakRandomSentence('en')}
+                      title="Play English audio"
+                      type="button"
+                    >
+                      {speakingLanguage === 'en' ? <Loader2 className="spin" size={17} /> : <Volume2 size={17} />}
+                      <span>English</span>
+                    </button>
+                  </div>
+                  <div className="random-sentence-line" lang="de">
+                    <p>{randomSentence.de}</p>
+                    <button
+                      aria-label="Play German text as audio"
+                      disabled={Boolean(speakingLanguage)}
+                      onClick={() => speakRandomSentence('de')}
+                      title="Play German audio"
+                      type="button"
+                    >
+                      {speakingLanguage === 'de' ? <Loader2 className="spin" size={17} /> : <Volume2 size={17} />}
+                      <span>German</span>
+                    </button>
+                  </div>
                 </div>
               )}
               {isLoadingSentence && !randomSentence && <p className="random-sentence-status">Loading a translation...</p>}
+              {sentenceAudioStatus && <p className="random-sentence-status" role="status">{sentenceAudioStatus}</p>}
               {sentenceError && <p className="random-sentence-error" role="alert">{sentenceError}</p>}
             </div>
           </div>
