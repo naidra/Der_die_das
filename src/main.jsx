@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, BookOpen, Check, Languages, Loader2, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, Languages, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react';
 import './styles.css';
 
 const NOUN_FILE_NAME = 'german_nouns.json';
@@ -9,6 +9,10 @@ const TRANSLATION_FILE_NAME = 'german_english.json';
 const RUSSIAN_TRANSLATION_FILE_NAME = 'english_russian.json';
 const ENGLISH_GERMAN_TRANSLATION_FILE_NAME = 'english_german.json';
 const RUSSIAN_ENGLISH_TRANSLATION_FILE_NAME = 'russian_english.json';
+const SENTENCE_FILE_NAME = 'en_de_translated_sentences.json';
+const SENTENCE_CHUNK_SIZE = 64 * 1024;
+
+let sentenceFileSizePromise;
 
 const ARTICLE_BY_GENUS = {
   m: 'der',
@@ -140,6 +144,79 @@ const TRANSLATION_FILE_BY_DICTIONARY = {
 
 function assetUrl(path) {
   return new URL(`${import.meta.env.BASE_URL}${path}`, window.location.href).toString();
+}
+
+function parseSentenceLines(text, includeFirstLine = false, includeLastLine = false) {
+  const lines = text.split('\n');
+  const start = includeFirstLine ? 0 : 1;
+  const end = includeLastLine ? lines.length : Math.max(start, lines.length - 1);
+
+  return lines.slice(start, end).flatMap((line) => {
+    try {
+      const sentence = JSON.parse(line);
+      const en = String(sentence?.en || '').trim();
+      const de = String(sentence?.de || '').trim();
+      return en && de ? [{ en, de }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+async function getSentenceFileSize(signal) {
+  if (!sentenceFileSizePromise) {
+    sentenceFileSizePromise = fetch(assetUrl(SENTENCE_FILE_NAME), { method: 'HEAD', signal })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Could not load ${SENTENCE_FILE_NAME} (${response.status})`);
+        }
+
+        const size = Number(response.headers.get('content-length'));
+        if (!Number.isFinite(size) || size <= 0) {
+          throw new Error(`Could not determine the size of ${SENTENCE_FILE_NAME}`);
+        }
+
+        return size;
+      })
+      .catch((error) => {
+        sentenceFileSizePromise = undefined;
+        throw error;
+      });
+  }
+
+  return sentenceFileSizePromise;
+}
+
+async function loadRandomSentence(previousSentence, signal) {
+  const fileSize = await getSentenceFileSize(signal);
+  const maxStart = Math.max(0, fileSize - SENTENCE_CHUNK_SIZE);
+  const start = Math.floor(Math.random() * (maxStart + 1));
+  const end = Math.min(fileSize - 1, start + SENTENCE_CHUNK_SIZE - 1);
+  const response = await fetch(assetUrl(SENTENCE_FILE_NAME), {
+    headers: { Range: `bytes=${start}-${end}` },
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not load ${SENTENCE_FILE_NAME} (${response.status})`);
+  }
+
+  const text = await response.text();
+  const sentences = parseSentenceLines(
+    text,
+    start === 0 || response.status === 200,
+    end === fileSize - 1 || response.status === 200
+  );
+  const alternatives = sentences.filter(
+    (sentence) => sentence.en !== previousSentence?.en || sentence.de !== previousSentence?.de
+  );
+  const candidates = alternatives.length ? alternatives : sentences;
+
+  if (!candidates.length) {
+    throw new Error(`No translations found in ${SENTENCE_FILE_NAME}`);
+  }
+
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 function normalizeInput(value) {
@@ -775,8 +852,35 @@ function App() {
   const [translationResult, setTranslationResult] = useState({ exact: '', suggestions: [] });
   const [lastTranslationQuery, setLastTranslationQuery] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
+  const [randomSentence, setRandomSentence] = useState(null);
+  const [isLoadingSentence, setIsLoadingSentence] = useState(true);
+  const [sentenceError, setSentenceError] = useState('');
   const dataRef = useRef(null);
   const suggestionRequestRef = useRef(0);
+
+  async function showAnotherSentence(signal) {
+    setIsLoadingSentence(true);
+    setSentenceError('');
+
+    try {
+      const sentence = await loadRandomSentence(randomSentence, signal);
+      setRandomSentence(sentence);
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        setSentenceError(error?.message || String(error));
+      }
+    } finally {
+      if (!signal?.aborted) {
+        setIsLoadingSentence(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    showAnotherSentence(controller.signal);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1180,8 +1284,30 @@ function App() {
 
       <section className="results-panel" aria-live="polite">
         {activeTab === 'articles' && !lastQuery && (
-          <div className="empty-state">
+          <div className="empty-state sentence-empty-state">
             <p>{searchKind === 'nouns' ? 'Enter a noun to see its article and forms.' : 'Enter a verb to see its conjugation table.'}</p>
+            <div className="random-sentence" aria-busy={isLoadingSentence}>
+              <div className="random-sentence-heading">
+                <span>Translation practice</span>
+                <button
+                  aria-label="Show another random translation"
+                  disabled={isLoadingSentence}
+                  onClick={() => showAnotherSentence()}
+                  title="Show another translation"
+                  type="button"
+                >
+                  <RefreshCw className={isLoadingSentence ? 'spin' : undefined} size={18} />
+                </button>
+              </div>
+              {randomSentence && (
+                <div className="random-sentence-copy">
+                  <p lang="en">{randomSentence.en}</p>
+                  <p lang="de">{randomSentence.de}</p>
+                </div>
+              )}
+              {isLoadingSentence && !randomSentence && <p className="random-sentence-status">Loading a translation...</p>}
+              {sentenceError && <p className="random-sentence-error" role="alert">{sentenceError}</p>}
+            </div>
           </div>
         )}
 
